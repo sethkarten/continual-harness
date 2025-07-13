@@ -12,9 +12,11 @@ An AI agent that plays Pokémon Emerald using vision-language models to perceive
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [1. Clone the Repository](#1-clone-the-repository)
-  - [2. Create Virtual Environment](#2-create-virtual-environment)
-  - [3. Install Dependencies](#3-install-dependencies)
-  - [4. Set up Game ROM](#4-set-up-game-rom)
+  - [2. Create Conda Environment (Recommended)](#2-create-conda-environment-recommended)
+  - [3. Install mgba System Library (Required for Python bindings)](#3-install-mgba-system-library-required-for-python-bindings)
+  - [4. Install Compatible libffi in Conda (Important!)](#4-install-compatible-libffi-in-conda-important)
+  - [5. Install Python Dependencies](#5-install-python-dependencies)
+  - [6. Set up Game ROM](#6-set-up-game-rom)
 - [VLM Backend Setup](#vlm-backend-setup)
   - [OpenAI](#-openai-gpt-4v-o3-mini-etc)
   - [OpenRouter](#-openrouter-access-to-many-models)
@@ -89,26 +91,39 @@ git clone https://github.com/sethkarten/pokeagent-speedrun
 cd pokeagent-speedrun
 ```
 
-### 2. Create Virtual Environment
+### 2. Create Conda Environment (Recommended)
 
 ```bash
-# Using conda (recommended)
-conda create -n pokeagent python=3.12
-conda activate pokeagent
-
-# OR using venv
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Create and activate the environment
+/data/milkkarten/anaconda3/bin/conda create -n pokeagent python=3.10 -y
+/data/milkkarten/anaconda3/bin/conda activate pokeagent
 ```
 
-### 3. Install Dependencies
+### 3. Install mgba System Library (Required for Python bindings)
+
+Download and install the official Ubuntu package from the [mGBA downloads page](https://mgba.io/downloads.html):
 
 ```bash
-# Install all dependencies
+wget https://github.com/mgba-emu/mgba/releases/download/0.10.5/mGBA-0.10.5-ubuntu64-focal.tar.xz
+tar -xf mGBA-0.10.5-ubuntu64-focal.tar.xz
+sudo dpkg -i mGBA-0.10.5-ubuntu64-focal/libmgba.deb
+```
+
+### 4. Install Compatible libffi in Conda (Important!)
+
+Before installing Python dependencies, ensure you have a compatible libffi version (3.3 or 7.x) in your conda environment:
+
+```bash
+/data/milkkarten/anaconda3/bin/conda install -n pokeagent libffi=3.3 -y
+```
+
+### 5. Install Python Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 4. Set up Game ROM
+### 6. Set up Game ROM
 
 **Important**: You must obtain a Pokémon Emerald ROM file legally (e.g., dump from your own cartridge).
 

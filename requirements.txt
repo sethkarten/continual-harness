@@ -42,3 +42,4 @@ bitsandbytes>=0.41.0  # Quantization support
 accelerate>=0.25.0    # Model acceleration
 sentencepiece>=0.1.99  # Tokenization support
 protobuf>=3.20.0      # Protocol buffers
+cffi>=1.6
