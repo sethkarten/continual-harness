@@ -103,6 +103,7 @@ conda activate pokeagent
 
 Download and install the official Ubuntu package from the [mGBA downloads page](https://mgba.io/downloads.html):
 
+Example for 20.04:
 ```bash
 wget https://github.com/mgba-emu/mgba/releases/download/0.10.5/mGBA-0.10.5-ubuntu64-focal.tar.xz
 tar -xf mGBA-0.10.5-ubuntu64-focal.tar.xz
