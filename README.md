@@ -95,8 +95,8 @@ cd pokeagent-speedrun
 
 ```bash
 # Create and activate the environment
-/data/milkkarten/anaconda3/bin/conda create -n pokeagent python=3.10 -y
-/data/milkkarten/anaconda3/bin/conda activate pokeagent
+conda create -n pokeagent python=3.10 -y
+conda activate pokeagent
 ```
 
 ### 3. Install mgba System Library (Required for Python bindings)
@@ -114,7 +114,7 @@ sudo dpkg -i mGBA-0.10.5-ubuntu64-focal/libmgba.deb
 Before installing Python dependencies, ensure you have a compatible libffi version (3.3 or 7.x) in your conda environment:
 
 ```bash
-/data/milkkarten/anaconda3/bin/conda install -n pokeagent libffi=3.3 -y
+conda install -n pokeagent libffi=3.3 -y
 ```
 
 ### 5. Install Python Dependencies
