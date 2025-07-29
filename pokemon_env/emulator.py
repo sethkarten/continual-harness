@@ -2,11 +2,16 @@ import logging
 import time
 import threading
 import queue
+import tempfile
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 import numpy as np
 from PIL import Image
 
+import mgba.core
 import mgba.log
+import mgba.image
+from mgba._pylib import ffi, lib
 
 from .memory_reader import PokemonEmeraldReader
 
@@ -22,6 +27,7 @@ class EmeraldEmulator:
         self.sound = sound
 
         self.gba = None
+        self.core = None
         self.width = 240
         self.height = 160
         self.running = False
@@ -33,135 +39,150 @@ class EmeraldEmulator:
         # Memory reader for accessing game state
         self.memory_reader = None
 
-        # Define key mapping for pygba
-        self.BUTTON_MAP = {
-            "a": "A",
-            "b": "B", 
-            "start": "Start",
-            "select": "Select",
-            "up": "Up",
-            "down": "Down",
-            "left": "Left",
-            "right": "Right",
-            "l": "L",
-            "r": "R"
-        }
+        # Memory cache for efficient reading
+        self._mem_cache = {}
 
-        self.PYGBA_BUTTON_ORDER = ["A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L"]
-        self._LOWER_TO_PYGBA_BUTTONS = {
-            "a": "A", "b": "B", "select": "Select", "start": "Start",
-            "right": "Right", "left": "Left", "up": "Up", "down": "Down",
-            "r": "R", "l": "L"
+        # Define key mapping for mgba
+        self.KEY_MAP = {
+            "a": lib.GBA_KEY_A,
+            "b": lib.GBA_KEY_B,
+            "start": lib.GBA_KEY_START,
+            "select": lib.GBA_KEY_SELECT,
+            "up": lib.GBA_KEY_UP,
+            "down": lib.GBA_KEY_DOWN,
+            "left": lib.GBA_KEY_LEFT,
+            "right": lib.GBA_KEY_RIGHT,
+            "l": lib.GBA_KEY_L,
+            "r": lib.GBA_KEY_R
         }
 
     def initialize(self):
         """Load ROM and set up emulator"""
         try:
-            import pygba
-            import mgba.image
             # Prevents relentless spamming to stdout by libmgba.
             mgba.log.silence()
-            self.gba = pygba.PyGBA.load(self.rom_path)
+            
+            # Create a temporary directory and copy the gba file into it
+            # this is necessary to prevent mgba from overwriting the save file (and to prevent crashes)
+            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_gba = tmp_dir / "rom.gba"
+            tmp_gba.write_bytes(Path(self.rom_path).read_bytes())
+            
+            # Load the core
+            self.core = mgba.core.load_path(str(tmp_gba))
+            if self.core is None:
+                raise ValueError(f"Failed to load GBA file: {self.rom_path}")
+            
+            # Auto-load save if it exists
+            self.core.autoload_save()
+            self.core.reset()
             
             # Get dimensions from the core
-            self.width, self.height = self.gba.core.desired_video_dimensions()
+            self.width, self.height = self.core.desired_video_dimensions()
             
             # Set up video buffer for frame capture using mgba.image.Image
             self.video_buffer = mgba.image.Image(self.width, self.height)
-            self.gba.core.set_video_buffer(self.video_buffer)
-            self.gba.core.reset()  # Reset after setting video buffer
+            self.core.set_video_buffer(self.video_buffer)
             
             # Initialize memory reader
-            self.memory_reader = PokemonEmeraldReader(self.gba.core.memory)
+            self.memory_reader = PokemonEmeraldReader(self.core.memory)
             
-            logger.info(f"pygba initialized with ROM: {self.rom_path}")
-            # self.tick(60)  # Advance 60 frames after initializing
-        except ImportError:
-            raise ImportError("pygba not installed. Try: pip install pygba")
+            # Set up frame callback to invalidate memory cache
+            self.core.add_frame_callback(self._invalidate_mem_cache)
+            
+            logger.info(f"mgba initialized with ROM: {self.rom_path}")
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize pygba: {e}")
+            raise RuntimeError(f"Failed to initialize mgba: {e}")
+
+    def _invalidate_mem_cache(self):
+        """Invalidate memory cache when frame changes"""
+        self._mem_cache = {}
+
+    def _get_memory_region(self, region_id: int):
+        """Get memory region for efficient reading"""
+        if region_id not in self._mem_cache:
+            mem_core = self.core.memory.u8._core
+            size = ffi.new("size_t *")
+            ptr = ffi.cast("uint8_t *", mem_core.getMemoryBlock(mem_core, region_id, size))
+            self._mem_cache[region_id] = ffi.buffer(ptr, size[0])[:]
+        return self._mem_cache[region_id]
+
+    def read_memory(self, address: int, size: int = 1):
+        """Read memory at given address"""
+        region_id = address >> lib.BASE_OFFSET
+        mem_region = self._get_memory_region(region_id)
+        mask = len(mem_region) - 1
+        address &= mask
+        return mem_region[address:address + size]
+
+    def read_u8(self, address: int):
+        """Read unsigned 8-bit value"""
+        return int.from_bytes(self.read_memory(address, 1), byteorder='little', signed=False)
+
+    def read_u16(self, address: int):
+        """Read unsigned 16-bit value"""
+        return int.from_bytes(self.read_memory(address, 2), byteorder='little', signed=False)
+
+    def read_u32(self, address: int):
+        """Read unsigned 32-bit value"""
+        return int.from_bytes(self.read_memory(address, 4), byteorder='little', signed=False)
 
     def tick(self, frames: int = 1):
         """Advance emulator by given number of frames"""
-        if self.gba:
+        if self.core:
             for _ in range(frames):
-                self.gba.core.run_frame()
+                self.core.run_frame()
+
+    def press_key(self, key: str, frames: int = 2):
+        """Press a key for specified number of frames"""
+        if key not in self.KEY_MAP:
+            raise ValueError(f"Invalid key: {key}")
+        if frames < 2:
+            raise ValueError("Cannot press a key for less than 2 frames.")
+        
+        key_code = self.KEY_MAP[key]
+        self.core.add_keys(key_code)
+        self.tick(frames - 1)
+        self.core.clear_keys(key_code)
+        self.tick(1)
 
     def press_buttons(self, buttons: List[str], hold_frames: int = 10, release_frames: int = 10):
         """Press a sequence of buttons"""
-        if not self.gba:
+        if not self.core:
             return "Emulator not initialized"
 
         for button in buttons:
-            mapped = self.BUTTON_MAP.get(button.lower())
-            if mapped is None:
+            if button.lower() not in self.KEY_MAP:
                 logger.warning(f"Unknown button: {button}")
                 continue
             
-            # Use pygba's button press methods
-            if mapped == "A":
-                self.gba.press_a(hold_frames)
-            elif mapped == "B":
-                self.gba.press_b(hold_frames)
-            elif mapped == "Start":
-                self.gba.press_start(hold_frames)
-            elif mapped == "Select":
-                self.gba.press_select(hold_frames)
-            elif mapped == "Up":
-                self.gba.press_up(hold_frames)
-            elif mapped == "Down":
-                self.gba.press_down(hold_frames)
-            elif mapped == "Left":
-                self.gba.press_left(hold_frames)
-            elif mapped == "Right":
-                self.gba.press_right(hold_frames)
-            elif mapped == "L":
-                self.gba.press_l(hold_frames)
-            elif mapped == "R":
-                self.gba.press_r(hold_frames)
+            self.press_key(button.lower(), hold_frames)
 
         self.tick(release_frames)
         return f"Pressed: {'+'.join(buttons)}"
 
     def run_frame_with_buttons(self, buttons: List[str]):
         """Set buttons and advance one frame."""
-        if not self.gba:
+        if not self.core:
             return
 
-        # Try to use core.set_buttons if available
-        core = getattr(self.gba, 'core', None)
-        set_buttons = getattr(core, 'set_buttons', None)
-        if callable(set_buttons):
-            # Build a bitmask or list as required by set_buttons
-            # Assume set_buttons expects a list of bools in PYGBA_BUTTON_ORDER
-            action = [False] * len(self.PYGBA_BUTTON_ORDER)
-            for button in buttons:
-                pygba_button = self._LOWER_TO_PYGBA_BUTTONS.get(button.lower())
-                if pygba_button:
-                    try:
-                        idx = self.PYGBA_BUTTON_ORDER.index(pygba_button)
-                        action[idx] = True
-                    except ValueError:
-                        logger.warning(f"Button {pygba_button} not in PYGBA_BUTTON_ORDER")
-            set_buttons(action)
-            core.run_frame()
-            return
-
-        # Fallback: Use individual press methods for one frame
+        # Set all buttons for one frame
         for button in buttons:
-            mapped = self.BUTTON_MAP.get(button.lower())
-            if mapped is None:
-                logger.warning(f"Unknown button: {button}")
-                continue
-            method_name = f"press_{mapped.lower()}"
-            press_method = getattr(self.gba, method_name, None)
-            if callable(press_method):
-                press_method(2)  # Hold for 2 frames (minimum allowed)
-        self.tick(1)
+            if button.lower() in self.KEY_MAP:
+                key_code = self.KEY_MAP[button.lower()]
+                self.core.add_keys(key_code)
+        
+        self.core.run_frame()
+        
+        # Clear all buttons
+        for button in buttons:
+            if button.lower() in self.KEY_MAP:
+                key_code = self.KEY_MAP[button.lower()]
+                self.core.clear_keys(key_code)
 
     def get_screenshot(self) -> Optional[Image.Image]:
         """Return the current frame as a PIL image"""
-        if not self.gba or not self.video_buffer:
+        if not self.core or not self.video_buffer:
             return None
         
         try:
@@ -183,12 +204,12 @@ class EmeraldEmulator:
 
     def save_state(self, path: Optional[str] = None) -> Optional[bytes]:
         """Save current emulator state to file or return as bytes"""
-        if not self.gba:
+        if not self.core:
             return None
         
         try:
             # Get the raw state data
-            raw_data = self.gba.core.save_raw_state()
+            raw_data = self.core.save_raw_state()
             
             # Convert CFFI object to bytes if needed
             if hasattr(raw_data, 'buffer'):
@@ -209,7 +230,7 @@ class EmeraldEmulator:
 
     def load_state(self, path: Optional[str] = None, state_bytes: Optional[bytes] = None):
         """Load emulator state from file or memory"""
-        if not self.gba:
+        if not self.core:
             return
         
         try:
@@ -220,7 +241,7 @@ class EmeraldEmulator:
                 # Ensure state_bytes is actually bytes
                 if not isinstance(state_bytes, bytes):
                     state_bytes = bytes(state_bytes)
-                self.gba.core.load_raw_state(state_bytes)
+                self.core.load_raw_state(state_bytes)
                 logger.info("State loaded.")
         except Exception as e:
             logger.error(f"Failed to load state: {e}")
@@ -274,8 +295,8 @@ class EmeraldEmulator:
         self.running = False
         if self.frame_thread and self.frame_thread.is_alive():
             self.frame_thread.join(timeout=1)
-        if self.gba:
-            self.gba = None
+        if self.core:
+            self.core = None
         logger.info("Emulator stopped.")
 
     def get_info(self) -> Dict[str, Any]:
@@ -283,7 +304,7 @@ class EmeraldEmulator:
         return {
             "rom_path": self.rom_path,
             "dimensions": (self.width, self.height),
-            "initialized": self.gba is not None,
+            "initialized": self.core is not None,
             "headless": self.headless,
             "sound": self.sound,
         }
