@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmeraldEmulator:
-    """pygba emulator wrapper for Pokémon Emerald with headless frame capture and scripted inputs."""
+    """emulator wrapper for Pokémon Emerald with headless frame capture and scripted inputs."""
 
     def __init__(self, rom_path: str, headless: bool = True, sound: bool = False):
         self.rom_path = rom_path
@@ -289,185 +289,47 @@ class EmeraldEmulator:
         }
 
     def get_comprehensive_state(self) -> Dict[str, Any]:
-        """Get comprehensive game state including visual and memory data"""
-        state = {
-            "visual": {
-                "screenshot": None,
-                "resolution": [self.width, self.height]
-            },
-            "player": {
-                "position": None,
-                "location": None
-            },
-            "game": {
-                "money": None,
-                "party": None
-            },
-            "map": {
-                "tiles": None,
-                "tile_names": None,
-                "metatile_behaviors": None,
-                "metatile_info": None
+        """Get comprehensive game state including visual and memory data using enhanced memory reader"""
+        # Use the enhanced memory reader's comprehensive state method
+        if self.memory_reader:
+            state = self.memory_reader.get_comprehensive_state()
+        else:
+            # Fallback to basic state
+            state = {
+                "visual": {
+                    "screenshot": None,
+                    "resolution": [self.width, self.height]
+                },
+                "player": {
+                    "position": None,
+                    "location": None,
+                    "name": None
+                },
+                "game": {
+                    "money": None,
+                    "party": None,
+                    "game_state": None,
+                    "is_in_battle": None,
+                    "time": None,
+                    "badges": None,
+                    "items": None,
+                    "item_count": None,
+                    "pokedex_caught": None,
+                    "pokedex_seen": None
+                },
+                "map": {
+                    "tiles": None,
+                    "tile_names": None,
+                    "metatile_behaviors": None,
+                    "metatile_info": None,
+                    "traversability": None
+                }
             }
-        }
         
         # Get visual observation
         screenshot = self.get_screenshot()
         if screenshot:
             state["visual"]["screenshot"] = screenshot
-        
-        # Get memory data if available
-        if self.memory_reader:
-            try:
-                # Player position
-                coords = self.memory_reader.read_coordinates()
-                if coords:
-                    state["player"]["position"] = {"x": coords[0], "y": coords[1]}
-                
-                # Map location
-                location = self.memory_reader.read_location()
-                if location:
-                    state["player"]["location"] = location
-                
-                # Enhanced player information
-                player_name = self.memory_reader.read_player_name()
-                game_state = self.memory_reader.get_game_state()
-                is_in_battle = self.memory_reader.is_in_battle()
-
-                state["game"] = {
-                    "player_name": player_name,
-                    "game_state": game_state,
-                    "is_in_battle": is_in_battle,
-                    "money": self.memory_reader.read_money(),
-                    "party": None # Party will be added below
-                }
-                
-                # Add battle details if in battle
-                if is_in_battle:
-                    battle_details = self.memory_reader.read_battle_details()
-                    if battle_details:
-                        state["game"]["battle"] = battle_details
-                
-                # Party Pokemon
-                party = self.memory_reader.read_party_pokemon()
-                if party:
-                    state["game"]["party"] = [
-                        {
-                            "species": pokemon.species_name,
-                            "level": pokemon.level,
-                            "current_hp": pokemon.current_hp,
-                            "max_hp": pokemon.max_hp,
-                            "status": pokemon.status.get_status_name() if pokemon.status else "OK",
-                            "types": [t.name for t in [pokemon.type1, pokemon.type2] if t],
-                            "moves": pokemon.moves,
-                            "move_pp": pokemon.move_pp,
-                            "nickname": pokemon.nickname
-                        }
-                        for pokemon in party
-                    ]
-                
-                # Map tiles around player
-                tiles = self.memory_reader.read_map_around_player(radius=7)
-                if tiles:
-                    state["map"]["tiles"] = tiles
-                    
-                    # Convert tiles to readable names (existing format)
-                    tile_names = []
-                    metatile_behaviors = []
-                    metatile_info = []
-                    
-                    for row in tiles:
-                        row_names = []
-                        row_behaviors = []
-                        row_info = []
-                        
-                        for tile_data in row:
-                            # Debug for tile ID 1
-                            if len(tile_data) > 0 and tile_data[0] == 1:
-                                print(f"🐛 EMULATOR DEBUG: Tile ID 1 - tile_data length: {len(tile_data)}, content: {tile_data}")
-                            
-                            # tile_data is now (metatile_id, behavior, collision, elevation)
-                            if len(tile_data) >= 4:
-                                tile_id, behavior, collision, elevation = tile_data
-                                if tile_id == 1:
-                                    print(f"🐛 EMULATOR DEBUG: Tile ID 1 - took 4-element path")
-                            elif len(tile_data) >= 2:
-                                # Backward compatibility
-                                tile_id, behavior = tile_data[:2]
-                                collision = 0
-                                elevation = 0
-                                if tile_id == 1:
-                                    print(f"🐛 EMULATOR DEBUG: Tile ID 1 - took 2-element path (backward compatibility)")
-                            else:
-                                # Handle unexpected format
-                                tile_id = tile_data[0] if tile_data else 0
-                                behavior = None
-                                collision = 0
-                                elevation = 0
-                                if tile_id == 1:
-                                    print(f"🐛 EMULATOR DEBUG: Tile ID 1 - took fallback path")
-                            
-                            # Existing tile name format
-                            tile_name = f"Tile_{tile_id:04X}"
-                            if behavior is not None and hasattr(behavior, 'name'):
-                                tile_name += f"({behavior.name})"
-                            row_names.append(tile_name)
-                            
-                            # Clean behavior name for the behaviors map
-                            if tile_id == 1:  # Debug for center tile
-                                print(f"🐛 EMULATOR DEBUG: Tile ID 1 - behavior type: {type(behavior)}, behavior value: {behavior}")
-                                if hasattr(behavior, 'name'):
-                                    print(f"🐛 EMULATOR DEBUG: Tile ID 1 - behavior.name: {behavior.name}")
-                                else:
-                                    print(f"🐛 EMULATOR DEBUG: Tile ID 1 - behavior has no 'name' attribute")
-                            
-                            # Fix: behavior can be MetatileBehavior.NORMAL (value=0) which is falsy but valid
-                            behavior_name = behavior.name if behavior is not None and hasattr(behavior, 'name') else "UNKNOWN"
-                            row_behaviors.append(behavior_name)
-                            
-                            # Detailed tile info using new collision-based logic
-                            tile_info = {
-                                "id": tile_id,
-                                "behavior": behavior_name,
-                                "collision": collision,
-                                "elevation": elevation,
-                                "passable": self._get_tile_passability(tile_data),
-                                "encounter_possible": self._get_tile_encounter_possible(tile_data),
-                                "surfable": self._get_tile_surfable(tile_data)
-                            }
-                            row_info.append(tile_info)
-                        
-                        tile_names.append(row_names)
-                        metatile_behaviors.append(row_behaviors)
-                        metatile_info.append(row_info)
-                    
-                    state["map"]["tile_names"] = tile_names
-                    state["map"]["metatile_behaviors"] = metatile_behaviors
-                    state["map"]["metatile_info"] = metatile_info
-                    
-                    # Create enhanced traversability map for agent navigation
-                    traversability_map = []
-                    for row_info in metatile_info:
-                        traversability_row = []
-                        for tile_info in row_info:
-                            behavior = tile_info["behavior"]
-                            passable = tile_info["passable"]
-                            
-                            # Enhanced traversability: show actual behaviors for special tiles
-                            if behavior == "NORMAL":
-                                # Only NORMAL tiles show as . or 0 based on passability
-                                traversability_row.append("." if passable else "0")
-                            else:
-                                # All non-NORMAL tiles show their behavior name regardless of passability
-                                # Abbreviate long names for readability
-                                short_name = behavior.replace("_", "")[:4]  # First 4 chars, no underscores
-                                traversability_row.append(short_name)
-                        traversability_map.append(traversability_row)
-                    
-                    state["map"]["traversability"] = traversability_map
-                    
-            except Exception as e:
-                logger.warning(f"Failed to read memory data: {e}")
         
         return state
 

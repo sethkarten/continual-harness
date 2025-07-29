@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 from .enums import MetatileBehavior, StatusCondition, Tileset, PokemonType, PokemonSpecies, Move, Badge, MapLocation
 from .types import PokemonData
@@ -62,6 +62,27 @@ class PokemonEmeraldReader:
         self.SAVE_BLOCK1_ADDR = 0x02025734  # Base address of Save Block 1 in Emerald
         self.PLAYER_NAME_OFFSET = 0x00  # Player name is typically at the start of Save Block 1
         self.PLAYER_NAME_LENGTH = 7  # Player name is 7 characters + terminator
+        
+        self.GAME_STATE_ADDR = 0x03005074
+        self.MENU_STATE_ADDR = 0x03005078
+        self.DIALOG_STATE_ADDR = 0x0300507c
+        
+        # Item bag addresses
+        self.BAG_ITEMS_ADDR = 0x02039888
+        self.BAG_ITEMS_COUNT_ADDR = 0x0203988c
+        
+        # Pokedex addresses
+        self.POKEDEX_CAUGHT_ADDR = 0x0202a4b0
+        self.POKEDEX_SEEN_ADDR = 0x0202a4b4
+        
+        # Time addresses
+        self.GAME_TIME_ADDR = 0x0202a4c0
+        self.GAME_TIME_HOURS_OFFSET = 0x00
+        self.GAME_TIME_MINUTES_OFFSET = 0x01
+        self.GAME_TIME_SECONDS_OFFSET = 0x02
+        
+        # Badge addresses
+        self.BADGES_ADDR = 0x0202a4d0
 
         # Map layout and tileset constants
         self.CURRENT_MAP_HEADER_ADDR = 0x02037318
@@ -202,12 +223,21 @@ class PokemonEmeraldReader:
             return False
 
     def get_game_state(self) -> str:
-        """Determine current game state: 'overworld', 'battle', 'menu', or 'unknown'"""
+        """Enhanced game state detection using addresses"""
         try:
             if self.is_in_battle():
                 return "battle"
             
-            # For now, assume overworld if not in battle
+            # Check for menu states using addresses
+            menu_state = self._read_u32(self.MENU_STATE_ADDR)
+            if menu_state != 0:
+                return "menu"
+            
+            # Check for dialog states
+            dialog_state = self._read_u32(self.DIALOG_STATE_ADDR)
+            if dialog_state != 0:
+                return "dialog"
+            
             return "overworld"
         except Exception as e:
             logger.warning(f"Failed to determine game state: {e}")
@@ -320,9 +350,27 @@ class PokemonEmeraldReader:
 
     def read_badges(self) -> list[str]:
         """Read obtained badges as list of names"""
-        logger.info("Badge reading not yet implemented with new addresses")
-        # Not yet implemented
-        return []
+        try:
+            badges_addr = self._read_u32(self.BADGES_ADDR)
+            if badges_addr == 0:
+                return []
+            
+            badge_byte = self._read_u8(badges_addr)
+            obtained_badges = []
+            
+            badge_names = [
+                "Stone", "Knuckle", "Dynamo", "Heat", "Balance", 
+                "Feather", "Mind", "Rain"
+            ]
+            
+            for i, badge_name in enumerate(badge_names):
+                if badge_byte & (1 << i):
+                    obtained_badges.append(badge_name)
+            
+            return obtained_badges
+        except Exception as e:
+            logger.warning(f"Failed to read badges: {e}")
+            return []
 
     def read_party_size(self) -> int:
         """Read number of Pokemon in party"""
@@ -421,9 +469,19 @@ class PokemonEmeraldReader:
 
     def read_game_time(self) -> tuple[int, int, int]:
         """Read game time as (hours, minutes, seconds)"""
-        logger.info("Game time reading not yet implemented with new addresses")
-        # Not yet implemented
-        return (0, 0, 0)
+        try:
+            time_addr = self._read_u32(self.GAME_TIME_ADDR)
+            if time_addr == 0:
+                return (0, 0, 0)
+            
+            hours = self._read_u8(time_addr + self.GAME_TIME_HOURS_OFFSET)
+            minutes = self._read_u8(time_addr + self.GAME_TIME_MINUTES_OFFSET)
+            seconds = self._read_u8(time_addr + self.GAME_TIME_SECONDS_OFFSET)
+            
+            return (hours, minutes, seconds)
+        except Exception as e:
+            logger.warning(f"Failed to read game time: {e}")
+            return (0, 0, 0)
 
     def read_location(self) -> str:
         """Read current location name"""
@@ -484,10 +542,29 @@ class PokemonEmeraldReader:
         return 0
 
     def read_items(self) -> list[tuple[str, int]]:
-        """Read all items in inventory with proper item names"""
-        # Not yet implemented
-        logger.info("Items reading not yet implemented with new addresses")
-        return []
+        """Read items in bag with quantities"""
+        try:
+            items_addr = self._read_u32(self.BAG_ITEMS_ADDR)
+            count_addr = self._read_u32(self.BAG_ITEMS_COUNT_ADDR)
+            
+            if items_addr == 0 or count_addr == 0:
+                return []
+            
+            item_count = self._read_u16(count_addr)
+            items = []
+            
+            for i in range(min(item_count, 30)):  # Max 30 items
+                item_id = self._read_u16(items_addr + i * 4)
+                quantity = self._read_u16(items_addr + i * 4 + 2)
+                
+                if item_id > 0:
+                    item_name = f"Item_{item_id:03d}"
+                    items.append((item_name, quantity))
+            
+            return items
+        except Exception as e:
+            logger.warning(f"Failed to read items: {e}")
+            return []
 
     def read_dialog(self) -> str:
         """Read any dialog text currently on screen"""
@@ -496,10 +573,252 @@ class PokemonEmeraldReader:
         return "Dialog text not implemented for Emerald"
 
     def read_pokedex_caught_count(self) -> int:
-        """Read how many unique Pokemon species have been caught"""
-        # Not yet implemented
-        logger.info("Pokedex caught count reading not yet implemented with new addresses")
-        return 0
+        """Read number of Pokemon caught"""
+        try:
+            caught_addr = self._read_u32(self.POKEDEX_CAUGHT_ADDR)
+            if caught_addr == 0:
+                return 0
+            
+            # Count set bits in the caught flags
+            caught_count = 0
+            for i in range(32):  # Read 32 bytes of flags
+                flags = self._read_u8(caught_addr + i)
+                caught_count += bin(flags).count('1')
+            
+            return caught_count
+        except Exception as e:
+            logger.warning(f"Failed to read Pokedex caught count: {e}")
+            return 0
+
+    def read_pokedex_seen_count(self) -> int:
+        """Read number of Pokemon seen"""
+        try:
+            seen_addr = self._read_u32(self.POKEDEX_SEEN_ADDR)
+            if seen_addr == 0:
+                return 0
+            
+            # Count set bits in the seen flags
+            seen_count = 0
+            for i in range(32):  # Read 32 bytes of flags
+                flags = self._read_u8(seen_addr + i)
+                seen_count += bin(flags).count('1')
+            
+            return seen_count
+        except Exception as e:
+            logger.warning(f"Failed to read Pokedex seen count: {e}")
+            return 0
+
+    def read_item_count(self) -> int:
+        """Read number of items in inventory"""
+        try:
+            count_addr = self._read_u32(self.BAG_ITEMS_COUNT_ADDR)
+            if count_addr == 0:
+                return 0
+            
+            return self._read_u16(count_addr)
+        except Exception as e:
+            logger.warning(f"Failed to read item count: {e}")
+            return 0
+
+    def get_comprehensive_state(self) -> Dict[str, Any]:
+        """Get comprehensive game state including all available data"""
+        state = {
+            "visual": {
+                "screenshot": None,
+                "resolution": [240, 160]
+            },
+            "player": {
+                "position": None,
+                "location": None,
+                "name": None
+            },
+            "game": {
+                "money": None,
+                "party": None,
+                "game_state": None,
+                "is_in_battle": None,
+                "time": None,
+                "badges": None,
+                "items": None,
+                "item_count": None,
+                "pokedex_caught": None,
+                "pokedex_seen": None
+            },
+            "map": {
+                "tiles": None,
+                "tile_names": None,
+                "metatile_behaviors": None,
+                "metatile_info": None,
+                "traversability": None
+            }
+        }
+        
+        try:
+            # Player information
+            coords = self.read_coordinates()
+            if coords:
+                state["player"]["position"] = {"x": coords[0], "y": coords[1]}
+            
+            location = self.read_location()
+            if location:
+                state["player"]["location"] = location
+            
+            player_name = self.read_player_name()
+            if player_name:
+                state["player"]["name"] = player_name
+            
+            # Game information
+            state["game"].update({
+                "money": self.read_money(),
+                "game_state": self.get_game_state(),
+                "is_in_battle": self.is_in_battle(),
+                "time": self.read_game_time(),
+                "badges": self.read_badges(),
+                "items": self.read_items(),
+                "item_count": self.read_item_count(),
+                "pokedex_caught": self.read_pokedex_caught_count(),
+                "pokedex_seen": self.read_pokedex_seen_count()
+            })
+            
+            # Battle details if in battle
+            if state["game"]["is_in_battle"]:
+                battle_details = self.read_battle_details()
+                if battle_details:
+                    state["game"]["battle"] = battle_details
+            
+            # Party Pokemon
+            party = self.read_party_pokemon()
+            if party:
+                state["game"]["party"] = [
+                    {
+                        "species": pokemon.species_name,
+                        "level": pokemon.level,
+                        "current_hp": pokemon.current_hp,
+                        "max_hp": pokemon.max_hp,
+                        "status": pokemon.status.get_status_name() if pokemon.status else "OK",
+                        "types": [t.name for t in [pokemon.type1, pokemon.type2] if t],
+                        "moves": pokemon.moves,
+                        "move_pp": pokemon.move_pp,
+                        "nickname": pokemon.nickname
+                    }
+                    for pokemon in party
+                ]
+            
+            # Map tiles
+            tiles = self.read_map_around_player(radius=7)
+            if tiles:
+                state["map"]["tiles"] = tiles
+                
+                # Process tiles for enhanced information
+                tile_names = []
+                metatile_behaviors = []
+                metatile_info = []
+                traversability_map = []
+                
+                for row in tiles:
+                    row_names = []
+                    row_behaviors = []
+                    row_info = []
+                    traversability_row = []
+                    
+                    for tile_data in row:
+                        if len(tile_data) >= 4:
+                            tile_id, behavior, collision, elevation = tile_data
+                        elif len(tile_data) >= 2:
+                            tile_id, behavior = tile_data[:2]
+                            collision = 0
+                            elevation = 0
+                        else:
+                            tile_id = tile_data[0] if tile_data else 0
+                            behavior = None
+                            collision = 0
+                            elevation = 0
+                        
+                        # Tile name
+                        tile_name = f"Tile_{tile_id:04X}"
+                        if behavior is not None and hasattr(behavior, 'name'):
+                            tile_name += f"({behavior.name})"
+                        row_names.append(tile_name)
+                        
+                        # Behavior name
+                        behavior_name = behavior.name if behavior is not None and hasattr(behavior, 'name') else "UNKNOWN"
+                        row_behaviors.append(behavior_name)
+                        
+                        # Detailed tile info
+                        tile_info = {
+                            "id": tile_id,
+                            "behavior": behavior_name,
+                            "collision": collision,
+                            "elevation": elevation,
+                            "passable": collision == 0,
+                            "encounter_possible": self._is_encounter_tile(behavior),
+                            "surfable": self._is_surfable_tile(behavior)
+                        }
+                        row_info.append(tile_info)
+                        
+                        # Traversability
+                        if behavior_name == "NORMAL":
+                            traversability_row.append("." if collision == 0 else "0")
+                        else:
+                            short_name = behavior_name.replace("_", "")[:4]
+                            traversability_row.append(short_name)
+                    
+                    tile_names.append(row_names)
+                    metatile_behaviors.append(row_behaviors)
+                    metatile_info.append(row_info)
+                    traversability_map.append(traversability_row)
+                
+                state["map"]["tile_names"] = tile_names
+                state["map"]["metatile_behaviors"] = metatile_behaviors
+                state["map"]["metatile_info"] = metatile_info
+                state["map"]["traversability"] = traversability_map
+                
+        except Exception as e:
+            logger.warning(f"Failed to read comprehensive state: {e}")
+        
+        return state
+
+    def _is_encounter_tile(self, behavior) -> bool:
+        """Check if a tile can trigger encounters"""
+        if not behavior:
+            return False
+        
+        encounter_behaviors = {
+            MetatileBehavior.TALL_GRASS,
+            MetatileBehavior.LONG_GRASS,
+            MetatileBehavior.UNUSED_05,
+            MetatileBehavior.DEEP_SAND,
+            MetatileBehavior.CAVE,
+            MetatileBehavior.INDOOR_ENCOUNTER,
+            MetatileBehavior.POND_WATER,
+            MetatileBehavior.INTERIOR_DEEP_WATER,
+            MetatileBehavior.DEEP_WATER,
+            MetatileBehavior.OCEAN_WATER,
+            MetatileBehavior.SEAWEED,
+            MetatileBehavior.ASHGRASS,
+            MetatileBehavior.FOOTPRINTS,
+            MetatileBehavior.SEAWEED_NO_SURFACING
+        }
+        
+        return behavior in encounter_behaviors
+
+    def _is_surfable_tile(self, behavior) -> bool:
+        """Check if a tile can be surfed on"""
+        if not behavior:
+            return False
+        
+        surfable_behaviors = {
+            MetatileBehavior.POND_WATER,
+            MetatileBehavior.INTERIOR_DEEP_WATER,
+            MetatileBehavior.DEEP_WATER,
+            MetatileBehavior.SOOTOPOLIS_DEEP_WATER,
+            MetatileBehavior.OCEAN_WATER,
+            MetatileBehavior.NO_SURFACING,
+            MetatileBehavior.SEAWEED,
+            MetatileBehavior.SEAWEED_NO_SURFACING
+        }
+        
+        return behavior in surfable_behaviors
 
     def _convert_text(self, bytes_data: list[int]) -> str:
         """Convert Emerald text format to ASCII"""

@@ -110,6 +110,12 @@ tar -xf mGBA-0.10.5-ubuntu64-focal.tar.xz
 sudo dpkg -i mGBA-0.10.5-ubuntu64-focal/libmgba.deb
 ```
 
+Mac OS x86_64 Instructions:
+```bash
+# arch -x86_64 /bin/zsh     # m-series Macs for backwards compatibility
+brew install mgba
+```
+
 ### 4. Install Compatible libffi in Conda (Important!)
 
 Before installing Python dependencies, ensure you have a compatible libffi version (3.3 or 7.x) in your conda environment:
@@ -186,10 +192,10 @@ export GOOGLE_API_KEY="your-api-key-here"
 
 2. Run agent:
 ```bash
-python agent.py --backend gemini --model-name "gemini-1.5-pro"
+python agent.py --backend gemini --model-name "gemini-2.5-flash"
 ```
 
-Supported models: `gemini-1.5-pro`, `gemini-1.5-flash`, etc.
+Supported models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, etc.
 
 ### 🔸 Local HuggingFace Models
 
