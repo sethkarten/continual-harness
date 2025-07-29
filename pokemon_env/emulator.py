@@ -83,6 +83,7 @@ class EmeraldEmulator:
             # Set up video buffer for frame capture using mgba.image.Image
             self.video_buffer = mgba.image.Image(self.width, self.height)
             self.core.set_video_buffer(self.video_buffer)
+            self.core.reset()  # Reset after setting video buffer
             
             # Initialize memory reader
             self.memory_reader = PokemonEmeraldReader(self.core.memory)
