@@ -17,6 +17,8 @@ from .memory_reader import PokemonEmeraldReader
 
 logger = logging.getLogger(__name__)
 
+# some acknowledgement to https://github.com/dvruette/pygba
+
 
 class EmeraldEmulator:
     """emulator wrapper for Pokémon Emerald with headless frame capture and scripted inputs."""

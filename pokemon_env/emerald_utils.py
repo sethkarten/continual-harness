@@ -1,3 +1,6 @@
+# This file is taken from https://github.com/dvruette/pygba/blob/main/pygba/utils.py
+# and modified to work with the Pokemon Emerald game.
+
 import functools
 import struct
 from collections import namedtuple
