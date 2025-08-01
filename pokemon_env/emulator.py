@@ -86,7 +86,7 @@ class EmeraldEmulator:
             self.core.reset()  # Reset after setting video buffer
             
             # Initialize memory reader
-            self.memory_reader = PokemonEmeraldReader(self.core.memory)
+            self.memory_reader = PokemonEmeraldReader(self.core)
             
             # Set up frame callback to invalidate memory cache
             self.core.add_frame_callback(self._invalidate_mem_cache)
