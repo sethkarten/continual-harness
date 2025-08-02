@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PokeAgent Challenge - Speedrun</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+        
+        html, body {
+            font-family: 'VT323', monospace;
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0a;
+            color: #33ff33;
+            width: 1920px;
+            height: 1080px;
+            overflow: hidden;
+            letter-spacing: 1px;
+        }
+        
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            background-color: #1a1a1a;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            border-bottom: 2px solid #33ff33;
+            height: 60px;
+            box-sizing: border-box;
+        }
+        
+        .header-logo {
+            color: #ff6177;
+            font-weight: bold;
+            margin-right: 20px;
+            text-shadow: 0 0 5px #ff6177;
+        }
+        
+        .header-title {
+            color: #33ff33;
+            font-size: 16px;
+        }
+        
+        .content {
+            display: flex;
+            height: 1020px;
+            padding: 10px;
+            gap: 10px;
+            box-sizing: border-box;
+        }
+        
+        .game-panel {
+            width: 895px;
+            height: 890px;
+            display: flex;
+            flex-direction: column;
+            background-color: #1a1a1a;
+            border-radius: 0;
+            overflow: hidden;
+            border: 1px solid #33ff33;
+            box-sizing: border-box;
+        }
+        
+        .frame-container {
+            width: 895px;
+            height: 890px;
+            margin: 0 auto;
+            position: relative;
+            background-color: #000000;
+            border: 1px solid #33ff33;
+            box-shadow: 0 0 10px #33ff33;
+            box-sizing: border-box;
+            padding: 0;
+            overflow: hidden;
+            /* Game frame: 972px total - 140px milestones - 150px actions = 682px */
+        }
+        
+        .frame {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            image-rendering: pixelated;
+        }
+        
+        .milestones {
+            padding: 15px;
+            background-color: #1a1a1a;
+            border-top: 1px solid #33ff33;
+            height: 200px;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        
+        .action-section {
+            background-color: #1a1a1a;
+            border-top: 1px solid #33ff33;
+            padding: 15px;
+            height: 150px;
+            box-sizing: border-box;
+        }
+        
+        .milestones-container {
+            height: 140px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        
+        .milestones-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        
+        .milestones-container::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        
+        .milestones-container::-webkit-scrollbar-thumb {
+            background: #33ff33;
+            border-radius: 2px;
+        }
+        
+        .milestones-container::-webkit-scrollbar-thumb:hover {
+            background: #ff6177;
+        }
+        
+        .milestone-title {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        .milestone-icon {
+            margin-right: 10px;
+        }
+        
+        .milestone-progress {
+            flex: 1;
+            height: 2px;
+            background-color: #666;
+            margin: 0 10px;
+            box-shadow: 0 0 5px #33ff33;
+            position: relative;
+        }
+
+        .milestone-progress-fill {
+            height: 100%;
+            background-color: #33ff33;
+            transition: width 0.3s ease;
+        }
+        
+        .milestone-count {
+            color: #ff6177;
+        }
+        
+        .milestone-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            color: #33ff33;
+            font-size: 12px;
+        }
+        
+        .milestone-check {
+            color: #ff6177;
+            margin-left: auto;
+            text-shadow: 0 0 5px #ff6177;
+        }
+
+        .milestone-category {
+            display: inline-block;
+            background-color: #0a0a0a;
+            border: 1px solid #666;
+            color: #666;
+            padding: 1px 4px;
+            font-size: 10px;
+            margin-right: 8px;
+            min-width: 50px;
+            text-align: center;
+        }
+
+        .milestone-category.location { border-color: #33ff33; color: #33ff33; }
+        .milestone-category.pokemon { border-color: #ffff33; color: #ffff33; }
+        .milestone-category.badge { border-color: #ff6177; color: #ff6177; }
+        .milestone-category.progress { border-color: #33ffff; color: #33ffff; }
+        
+        .milestone-name.newest {
+            color: #ff6177;
+            text-shadow: 0 0 5px #ff6177;
+            font-weight: bold;
+        }
+        
+        .milestone-name.recent {
+            color: #33ff33;
+        }
+        
+        .milestone-name.older {
+            color: #999;
+        }
+        
+        .brain-panel {
+            width: 1080px;
+            height: 972px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            box-sizing: border-box;
+        }
+        
+        .brain-section {
+            background-color: #1a1a1a;
+            border-radius: 0;
+            padding: 15px;
+            border: 1px solid #33ff33;
+            box-sizing: border-box;
+        }
+        
+        .brain-section:nth-child(1) { height: 400px; } /* Agent Thinking */
+        .brain-section:nth-child(2) { height: 520px; } /* Party Status */
+        
+        .section-title {
+            color: #ff6177;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-shadow: 0 0 5px #ff6177;
+        }
+        
+        .agent-thinking {
+            height: 340px;
+            line-height: 1.4;
+            overflow-y: auto;
+        }
+
+
+
+        .action-queue {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            height: 90px;
+            overflow-y: auto;
+        }
+
+        .action-button {
+            background-color: #0a0a0a;
+            border: 1px solid #33ff33;
+            color: #33ff33;
+            padding: 5px 10px;
+            font-family: 'VT323', monospace;
+            font-size: 12px;
+            border-radius: 0;
+            transition: all 0.3s ease;
+        }
+
+        .action-button.newest {
+            border-color: #ff6177;
+            box-shadow: 0 0 10px #ff6177;
+            animation: buttonGlow 0.5s ease-out;
+        }
+
+        @keyframes buttonGlow {
+            0% { 
+                box-shadow: 0 0 15px #33ff33;
+                transform: scale(1.1);
+            }
+            100% { 
+                box-shadow: 0 0 5px #33ff33;
+                transform: scale(1);
+            }
+        }
+        
+        .game-state {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            height: 460px;
+            overflow-y: auto;
+        }
+
+        .party-pokemon {
+            background-color: #0a0a0a;
+            border: 1px solid #33ff33;
+            padding: 10px;
+            margin-bottom: 5px;
+        }
+
+        .pokemon-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        
+        .pokemon-name {
+            font-weight: bold;
+            color: #ff6177;
+        }
+
+        .pokemon-level {
+            color: #33ff33;
+        }
+        
+        .pokemon-stats {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .pokemon-hp {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .hp-bar {
+            height: 8px;
+            background-color: #333;
+            border-radius: 0;
+            width: 80px;
+            position: relative;
+            box-shadow: 0 0 5px #33ff33;
+        }
+
+        .hp-fill {
+            height: 100%;
+            background-color: #33ff33;
+            transition: width 0.3s ease;
+        }
+
+        .hp-fill.low {
+            background-color: #ff6177;
+        }
+
+        .hp-fill.critical {
+            background-color: #ff0000;
+        }
+
+        .pokemon-moves {
+            margin-top: 8px;
+            font-size: 12px;
+        }
+
+        .move-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 2px 0;
+            color: #666;
+        }
+
+        .move-name {
+            color: #33ff33;
+        }
+        
+
+
+        /* CRT effect */
+        .crt-lines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .crt-flicker {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(18, 16, 16, 0.1);
+            opacity: 0;
+            pointer-events: none;
+            z-index: 11;
+            animation: flicker 0.3s infinite;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.1; }
+            50% { opacity: 0; }
+            100% { opacity: 0.1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="crt-lines"></div>
+    <div class="crt-flicker"></div>
+    <div class="header">
+        <div class="header-logo">PokeAgent Challenge //</div>
+        <div class="header-title">PROTOCOL_EMERALD // AGENT = PLAYER</div>
+        <div style="flex: 1;"></div>
+        <div style="width: 10px; height: 10px; background-color: #33ff33; border-radius: 50%; box-shadow: 0 0 10px #33ff33;"></div>
+    </div>
+    
+    <div class="content">
+        <div class="game-panel">
+            <div class="frame-container">
+                <img id="frame" class="frame" src="" alt="Game Frame">
+            </div>
+            
+                        <div class="milestones">
+                <div class="milestone-title">
+                    <span class="milestone-icon">■</span>
+                    <span>SYSTEM.LOG - RECENT MILESTONES</span>
+                    <div class="milestone-progress">
+                        <div id="milestone-progress-fill" class="milestone-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <span id="milestone-count" class="milestone-count">0/0</span>
+                </div>
+                <div class="milestones-container">
+                <div id="milestones-list">
+                    <!-- Milestones will be added here -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="action-section">
+                <div class="section-title"># ACTION_QUEUE</div>
+                <div id="action-queue" class="action-queue">
+                    <!-- Recent button presses will appear here -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="brain-panel">
+                                    <div class="brain-section">
+                <div class="section-title"># AGENT_THINKING</div>
+                <div id="agent-thinking" class="agent-thinking">INITIALIZING AGENT...</div>
+            </div>
+            
+            <div class="brain-section">
+                <div class="section-title">◑ PARTY_STATUS</div>
+                <div id="party-status" class="game-state">
+                    <div class="party-pokemon">
+                        <div class="pokemon-header">
+                            <span class="pokemon-name">LOADING...</span>
+                            <span class="pokemon-level">Lv.??</span>
+                        </div>
+                        <div class="pokemon-hp">
+                            <span>HP:</span>
+                            <div class="hp-bar">
+                                <div class="hp-fill" style="width: 0%"></div>
+                    </div>
+                            <span>--/--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Initialize Socket.IO connection
+        const socket = io('http://127.0.0.1:8000');
+        
+        // WebSocket event handlers
+        socket.on('frame_update', function(data) {
+            document.getElementById('frame').src = `data:image/png;base64,${data.frame}`;
+        });
+        
+        socket.on('text_update', function(data) {
+            // Text updates can be logged to console if needed
+            console.log('Text update:', data.text);
+        });
+        
+        socket.on('plan_update', function(data) {
+            // Plan updates can be logged to console if needed
+            console.log('Plan update:', data.plan);
+        });
+        
+        socket.on('memory_update', function(data) {
+            // Memory updates can be logged to console if needed
+            console.log('Memory update: Memory refreshed');
+        });
+        
+        // Connection status indicators
+        socket.on('connect', function() {
+            console.log('WebSocket connected');
+            document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#33ff33';
+        });
+        
+        socket.on('disconnect', function() {
+            console.log('WebSocket disconnected');
+            document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#ff6177';
+        });
+
+        // Function to fetch and update agent thinking
+        async function updateAgentThinking() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/agent');
+                const data = await response.json();
+                
+                document.getElementById('agent-thinking').textContent = data.current_thought;
+                
+            } catch (error) {
+                console.error('Error fetching agent thinking:', error);
+            }
+        }
+
+        // Function to fetch and update recent actions
+        let lastButtonCount = 0;
+        let lastButtonData = '';
+        
+        async function updateRecentActions() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/recent_actions');
+                const data = await response.json();
+                
+                const actionQueue = document.getElementById('action-queue');
+                
+                // Get up to last 20 button presses (or fewer if less available)
+                const recentButtons = data.recent_buttons.slice(-20);
+                
+                // Create a signature of current buttons for change detection
+                const currentSignature = recentButtons.map(b => `${b.button}:${b.timestamp}`).join('|');
+                
+                // Only update if there are changes
+                if (currentSignature === lastButtonData && recentButtons.length === lastButtonCount) {
+                    return; // No changes, don't update
+                }
+                
+                lastButtonData = currentSignature;
+                lastButtonCount = recentButtons.length;
+                
+                actionQueue.innerHTML = ''; // Clear existing buttons
+                
+                // Only show actual buttons (no empty slots)
+                if (recentButtons.length === 0) {
+                    const emptyMessage = document.createElement('div');
+                    emptyMessage.style.color = '#666';
+                    emptyMessage.style.fontStyle = 'italic';
+                    emptyMessage.textContent = 'NO_RECENT_ACTIONS';
+                    actionQueue.appendChild(emptyMessage);
+                    return;
+                }
+                
+                recentButtons.forEach((buttonData, index) => {
+                    const button = document.createElement('div');
+                    button.className = 'action-button';
+                    button.textContent = buttonData.button;
+                    
+                    // Calculate age-based opacity (newer = more opaque)
+                    const age = recentButtons.length - index - 1; // 0 = newest
+                    const maxAge = Math.min(recentButtons.length - 1, 19); // Handle fewer than 20 buttons
+                    const opacity = maxAge > 0 ? Math.max(0.3, 1.0 - (age / maxAge) * 0.7) : 1.0;
+                    button.style.opacity = opacity;
+                    
+                    // Highlight the most recent button
+                    if (index === recentButtons.length - 1) {
+                        button.classList.add('newest');
+                    }
+                    
+                    actionQueue.appendChild(button);
+                });
+                
+            } catch (error) {
+                console.error('Error fetching recent actions:', error);
+            }
+        }
+
+        // Function to fetch and update milestones
+        async function updateMilestones() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/milestones');
+                const data = await response.json();
+                
+                console.log('Milestone data received:', data); // Debug log
+                
+                // Update progress bar and count (show recent out of completed)
+                const recentCount = Math.min(data.completed, 8);
+                document.getElementById('milestone-count').textContent = `${recentCount}/${data.completed} RECENT`;
+                document.getElementById('milestone-progress-fill').style.width = `${data.progress * 100}%`;
+                
+                // Update milestone list - GET ELEMENT FIRST!
+                const milestonesList = document.getElementById('milestones-list');
+                milestonesList.innerHTML = '';
+                
+                // Filter and show only recent completed milestones (max 8)
+                if (data.milestones && data.milestones.length > 0) {
+                    // Get only completed milestones, sorted by timestamp (most recent first)
+                    const completedMilestones = data.milestones
+                        .filter(milestone => milestone.completed)
+                        .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+                        .slice(0, 8); // Show max 8 recent milestones
+                    
+                    if (completedMilestones.length > 0) {
+                        completedMilestones.forEach((milestone, index) => {
+                            const item = document.createElement('div');
+                            item.className = 'milestone-item';
+                            
+                            const categoryClass = milestone.category || 'basic';
+                            const categoryDisplay = categoryClass.toUpperCase().substring(0, 4);
+                            
+                            // Add age indicator for visual feedback
+                            const ageClass = index === 0 ? 'newest' : index < 3 ? 'recent' : 'older';
+                            
+                            item.innerHTML = `
+                                <span class="milestone-category ${categoryClass}">${categoryDisplay}</span>
+                                <span class="milestone-name ${ageClass}">${milestone.name}</span>
+                                <span class="milestone-check">[OK]</span>
+                            `;
+                            milestonesList.appendChild(item);
+                        });
+                    } else {
+                        // Show message if no completed milestones yet
+                        const noCompleted = document.createElement('div');
+                        noCompleted.style.color = '#666';
+                        noCompleted.style.fontStyle = 'italic';
+                        noCompleted.style.textAlign = 'center';
+                        noCompleted.textContent = 'NO_MILESTONES_COMPLETED';
+                        milestonesList.appendChild(noCompleted);
+                    }
+                } else {
+                    // Show message if no milestones
+                    const noMilestones = document.createElement('div');
+                    noMilestones.style.color = '#666';
+                    noMilestones.style.fontStyle = 'italic';
+                    noMilestones.textContent = 'NO_MILESTONES_LOADED';
+                    milestonesList.appendChild(noMilestones);
+                }
+                
+                // Add debug info if available - AFTER milestones
+                if (data.current_location || data.badges !== undefined) {
+                    const debugInfo = document.createElement('div');
+                    debugInfo.style.fontSize = '10px';
+                    debugInfo.style.color = '#666';
+                    debugInfo.style.marginTop = '5px';
+                    
+                    let debugText = `
+                        LOC: ${data.current_location || 'UNKNOWN'} | 
+                        BADGES: ${data.badges || 0} | 
+                        SEEN: ${data.pokedex_seen || 0} | 
+                        CAUGHT: ${data.pokedex_caught || 0} | 
+                        PARTY: ${data.party_size || 0}
+                    `;
+                    
+                    // Add tracking system info if available
+                    if (data.tracking_system) {
+                        debugText += `<br/>TRACKING: ${data.tracking_system.toUpperCase()}`;
+                        if (data.milestone_file) {
+                            debugText += ` | FILE: ${data.milestone_file}`;
+                        }
+                    }
+                    
+                    debugInfo.innerHTML = debugText;
+                    
+                    // Remove old debug info
+                    const oldDebug = milestonesList.querySelector('.debug-info');
+                    if (oldDebug) oldDebug.remove();
+                    
+                    debugInfo.className = 'debug-info';
+                    milestonesList.appendChild(debugInfo);
+                }
+                
+            } catch (error) {
+                console.error('Error fetching milestones:', error);
+                // Show error in the UI
+                const milestonesList = document.getElementById('milestones-list');
+                milestonesList.innerHTML = `<div style="color: #ff6177;">ERROR: ${error.message}</div>`;
+            }
+        }
+
+        // Function to fetch and update party status
+        async function updatePartyStatus() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/state');
+                const data = await response.json();
+                
+                const partyContainer = document.getElementById('party-status');
+                partyContainer.innerHTML = '';
+                
+                if (data.player && data.player.party && data.player.party.length > 0) {
+                    data.player.party.forEach(pokemon => {
+                        if (pokemon && pokemon.species_name && pokemon.species_name.trim() !== '') {
+                            const pokemonDiv = document.createElement('div');
+                            pokemonDiv.className = 'party-pokemon';
+                            
+                            const hpPercent = pokemon.current_hp && pokemon.max_hp ? 
+                                (pokemon.current_hp / pokemon.max_hp) * 100 : 0;
+                            
+                            let hpClass = 'hp-fill';
+                            if (hpPercent < 25) hpClass += ' critical';
+                            else if (hpPercent < 50) hpClass += ' low';
+                            
+                            let movesHtml = '';
+                            if (pokemon.moves && pokemon.moves.length > 0) {
+                                const validMoves = pokemon.moves.filter((moveName, index) => {
+                                    if (!moveName) return false;
+                                    const cleanName = moveName.toString().trim().toLowerCase();
+                                    return cleanName !== '' && 
+                                           cleanName !== '(none)' && 
+                                           cleanName !== 'none' && 
+                                           cleanName !== 'null' &&
+                                           cleanName !== 'undefined';
+                                });
+                                
+                                if (validMoves.length > 0) {
+                                    movesHtml = '<div class="pokemon-moves">';
+                                    pokemon.moves.forEach((moveName, index) => {
+                                        if (moveName) {
+                                            const cleanName = moveName.toString().trim().toLowerCase();
+                                            if (cleanName !== '' && 
+                                                cleanName !== '(none)' && 
+                                                cleanName !== 'none' && 
+                                                cleanName !== 'null' &&
+                                                cleanName !== 'undefined') {
+                                                const currentPp = pokemon.move_pp && pokemon.move_pp[index] !== undefined ? pokemon.move_pp[index] : '?';
+                                                movesHtml += `<div class="move-item">
+                                                    <span class="move-name">${moveName.toUpperCase()}</span>
+                                                    <span>${currentPp} PP</span>
+                                                </div>`;
+                                            }
+                                        }
+                                    });
+                                    movesHtml += '</div>';
+                                }
+                            }
+                            
+                            const displayName = (pokemon.nickname && pokemon.nickname.trim() !== '') ? 
+                                pokemon.nickname.toUpperCase() : pokemon.species_name.toUpperCase();
+                            
+                            pokemonDiv.innerHTML = `
+                                <div class="pokemon-header">
+                                    <span class="pokemon-name">${displayName}</span>
+                                    <span class="pokemon-level">Lv.${pokemon.level || '??'}</span>
+                                </div>
+                                <div class="pokemon-hp">
+                                    <span>HP:</span>
+                                    <div class="hp-bar">
+                                        <div class="${hpClass}" style="width: ${hpPercent}%"></div>
+                                    </div>
+                                    <span>${pokemon.current_hp || '??'}/${pokemon.max_hp || '??'}</span>
+                                </div>
+                                ${movesHtml}
+                            `;
+                            
+                            partyContainer.appendChild(pokemonDiv);
+                        }
+                    });
+                } else {
+                    // Fallback if no party data
+                    partyContainer.innerHTML = `
+                        <div class="party-pokemon">
+                            <div class="pokemon-header">
+                                <span class="pokemon-name">NO_PARTY_DATA</span>
+                                <span class="pokemon-level">Lv.--</span>
+                            </div>
+                            <div class="pokemon-hp">
+                                <span>HP:</span>
+                                <div class="hp-bar">
+                                    <div class="hp-fill" style="width: 0%"></div>
+                                </div>
+                                <span>--/--</span>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                console.error('Error fetching party status:', error);
+            }
+        }
+
+        // Function to fetch and update the game screenshot
+        async function updateScreenshot() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/screenshot');
+                const data = await response.json();
+                document.getElementById('frame').src = `data:image/png;base64,${data.screenshot_base64}`;
+            } catch (error) {
+                console.error('Error fetching screenshot:', error);
+            }
+        }
+
+        // Set fast updates for frames
+        setInterval(() => {
+            updateScreenshot();
+        }, 100); // Update every 100ms
+
+        // Set up periodic updates
+        setInterval(() => {
+            updateAgentThinking();
+            updateRecentActions();
+            updatePartyStatus();
+        }, 500); // Update every 500ms
+
+        // Less frequent updates for milestones
+        setInterval(() => {
+            updateMilestones();
+        }, 2000); // Update every 2 seconds
+
+        // Call the update functions initially
+        updateScreenshot();
+        updateAgentThinking();
+        updateRecentActions();
+        updateMilestones();
+        updatePartyStatus();
+    </script>
+</body>
+</html>
