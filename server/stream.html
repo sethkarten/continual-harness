@@ -574,6 +574,9 @@
         async function updateMilestones() {
             try {
                 const response = await fetch('http://127.0.0.1:8000/milestones');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
                 const data = await response.json();
                 
                 console.log('Milestone data received:', data); // Debug log
@@ -669,6 +672,10 @@
                 // Show error in the UI
                 const milestonesList = document.getElementById('milestones-list');
                 milestonesList.innerHTML = `<div style="color: #ff6177;">ERROR: ${error.message}</div>`;
+                
+                // Also update the count to show error state
+                document.getElementById('milestone-count').textContent = 'ERROR';
+                document.getElementById('milestone-progress-fill').style.width = '0%';
             }
         }
 
@@ -794,12 +801,12 @@
             updateAgentThinking();
             updateRecentActions();
             updatePartyStatus();
-        }, 500); // Update every 500ms
+        }, 1000); // Update every 1000ms (reduced from 500ms)
 
         // Less frequent updates for milestones
         setInterval(() => {
             updateMilestones();
-        }, 2000); // Update every 2 seconds
+        }, 5000); // Update every 5 seconds (reduced from 2 seconds)
 
         // Call the update functions initially
         updateScreenshot();

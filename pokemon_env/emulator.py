@@ -3,6 +3,8 @@ import time
 import threading
 import queue
 import tempfile
+import json
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import numpy as np
@@ -18,6 +20,117 @@ from .memory_reader import PokemonEmeraldReader
 logger = logging.getLogger(__name__)
 
 # some acknowledgement to https://github.com/dvruette/pygba
+
+class MilestoneTracker:
+    """Persistent milestone tracking system integrated with emulator"""
+    
+    def __init__(self, filename: str = "milestones_progress.json"):
+        self.filename = filename
+        self.milestones = {}
+        # Don't automatically load from file - only load when explicitly requested
+    
+    def load_from_file(self):
+        """Load milestone progress from file"""
+        try:
+            if os.path.exists(self.filename):
+                with open(self.filename, 'r') as f:
+                    data = json.load(f)
+                    self.milestones = data.get('milestones', {})
+                logger.info(f"Loaded {len(self.milestones)} milestone records from {self.filename}")
+            else:
+                logger.info(f"No existing milestone file found, starting fresh")
+                self.milestones = {}
+        except Exception as e:
+            logger.warning(f"Error loading milestones from file: {e}")
+            self.milestones = {}
+    
+    def save_to_file(self):
+        """Save milestone progress to file"""
+        try:
+            data = {
+                'milestones': self.milestones,
+                'last_updated': time.time(),
+                'version': '1.0'
+            }
+            with open(self.filename, 'w') as f:
+                json.dump(data, f, indent=2)
+            logger.debug(f"Saved milestone progress to {self.filename}")
+        except Exception as e:
+            logger.warning(f"Error saving milestones to file: {e}")
+    
+    def mark_completed(self, milestone_id: str, timestamp: float = None):
+        """Mark a milestone as completed"""
+        if timestamp is None:
+            timestamp = time.time()
+        
+        if milestone_id not in self.milestones or not self.milestones[milestone_id].get('completed', False):
+            self.milestones[milestone_id] = {
+                'completed': True,
+                'timestamp': timestamp,
+                'first_completed': timestamp
+            }
+            logger.info(f"Milestone completed: {milestone_id}")
+            self.save_to_file()
+            return True
+        return False
+    
+    def is_completed(self, milestone_id: str) -> bool:
+        """Check if a milestone is completed"""
+        return self.milestones.get(milestone_id, {}).get('completed', False)
+    
+    def get_milestone_data(self, milestone_id: str) -> dict:
+        """Get milestone data"""
+        return self.milestones.get(milestone_id, {'completed': False, 'timestamp': None})
+    
+    def reset_milestone(self, milestone_id: str):
+        """Reset a milestone (for testing)"""
+        if milestone_id in self.milestones:
+            del self.milestones[milestone_id]
+            self.save_to_file()
+            logger.info(f"Reset milestone: {milestone_id}")
+    
+    def reset_all(self):
+        """Reset all milestones (for testing)"""
+        self.milestones = {}
+        self.save_to_file()
+        logger.info("Reset all milestones")
+    
+    def load_milestones_for_state(self, state_filename: str = None):
+        """Load milestones from file, optionally with a specific state filename"""
+        if state_filename:
+            # If a state filename is provided, try to load milestones from a corresponding file
+            # Remove .state extension and add _milestones.json
+            base_name = state_filename.replace('.state', '').replace('.sav', '')
+            milestone_filename = f"{base_name}_milestones.json"
+            original_filename = self.filename
+            self.filename = milestone_filename
+            logger.info(f"Loading milestones from state-specific file: {milestone_filename}")
+            self.load_from_file()
+            self.filename = original_filename  # Restore original filename for future saves
+            logger.info(f"Loaded {len(self.milestones)} milestones for state {state_filename}")
+        else:
+            # Load from default milestone file
+            logger.info(f"Loading milestones from default file: {self.filename}")
+            self.load_from_file()
+    
+    def save_milestones_for_state(self, state_filename: str = None):
+        """Save milestones to file, optionally with a specific state filename"""
+        if state_filename:
+            # If a state filename is provided, save milestones to a corresponding file
+            # Remove .state extension and add _milestones.json
+            base_name = state_filename.replace('.state', '').replace('.sav', '')
+            milestone_filename = f"{base_name}_milestones.json"
+            original_filename = self.filename
+            self.filename = milestone_filename
+            logger.info(f"Saving {len(self.milestones)} milestones to state-specific file: {milestone_filename}")
+            self.save_to_file()
+            self.filename = original_filename  # Restore original filename
+            return milestone_filename
+        else:
+            # Save to default milestone file
+            logger.info(f"Saving {len(self.milestones)} milestones to default file: {self.filename}")
+            self.save_to_file()
+            return self.filename
 
 
 class EmeraldEmulator:
@@ -43,6 +156,9 @@ class EmeraldEmulator:
 
         # Memory cache for efficient reading
         self._mem_cache = {}
+        
+        # Milestone tracker for progress tracking
+        self.milestone_tracker = MilestoneTracker()
 
         # Define key mapping for mgba
         self.KEY_MAP = {
@@ -81,6 +197,7 @@ class EmeraldEmulator:
             
             # Get dimensions from the core
             self.width, self.height = self.core.desired_video_dimensions()
+            logger.info(f"mgba initialized with ROM: {self.rom_path} and dimensions: {self.width}x{self.height}")
             
             # Set up video buffer for frame capture using mgba.image.Image
             self.video_buffer = mgba.image.Image(self.width, self.height)
@@ -182,6 +299,12 @@ class EmeraldEmulator:
             if button.lower() in self.KEY_MAP:
                 key_code = self.KEY_MAP[button.lower()]
                 self.core.clear_keys(key_code)
+        
+        # Clear state cache after action to ensure fresh data
+        if hasattr(self, '_cached_state'):
+            delattr(self, '_cached_state')
+        if hasattr(self, '_cached_state_time'):
+            delattr(self, '_cached_state_time')
 
     def get_screenshot(self) -> Optional[Image.Image]:
         """Return the current frame as a PIL image"""
@@ -226,6 +349,11 @@ class EmeraldEmulator:
                 with open(path, 'wb') as f:
                     f.write(data)
                 logger.info(f"State saved to {path}")
+                
+                # Save corresponding milestones for this state
+                milestone_filename = self.milestone_tracker.save_milestones_for_state(path)
+                logger.info(f"Milestones saved to {milestone_filename}")
+            
             return data
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
@@ -246,6 +374,11 @@ class EmeraldEmulator:
                     state_bytes = bytes(state_bytes)
                 self.core.load_raw_state(state_bytes)
                 logger.info("State loaded.")
+                
+                # Load corresponding milestones for this state
+                if path:
+                    self.milestone_tracker.load_milestones_for_state(path)
+                    logger.info(f"Milestones loaded for state {path}")
         except Exception as e:
             logger.error(f"Failed to load state: {e}")
 
@@ -314,6 +447,15 @@ class EmeraldEmulator:
 
     def get_comprehensive_state(self) -> Dict[str, Any]:
         """Get comprehensive game state including visual and memory data using enhanced memory reader"""
+        # Simple caching to avoid redundant calls within a short time window
+        import time
+        current_time = time.time()
+        
+        # Cache state for 100ms to avoid excessive memory reads
+        if hasattr(self, '_cached_state') and hasattr(self, '_cached_state_time'):
+            if current_time - self._cached_state_time < 0.1:  # 100ms cache
+                return self._cached_state
+        
         # Use the enhanced memory reader's comprehensive state method
         if self.memory_reader:
             state = self.memory_reader.get_comprehensive_state()
@@ -354,6 +496,10 @@ class EmeraldEmulator:
         screenshot = self.get_screenshot()
         if screenshot:
             state["visual"]["screenshot"] = screenshot
+        
+        # Cache the result
+        self._cached_state = state
+        self._cached_state_time = current_time
         
         return state
 
@@ -535,3 +681,275 @@ class EmeraldEmulator:
             }
         except Exception as e:
             return {"error": f"Failed to run memory tests: {e}"}
+    
+    def check_and_update_milestones(self, game_state: Dict[str, Any]):
+        """Check current game state and update milestones"""
+        try:
+            # Only check milestones that aren't already completed
+            milestones_to_check = [
+                "GAME_RUNNING", "HAS_PARTY", "LITTLEROOT_TOWN", "STARTER_CHOSEN", 
+                "POKEDEX_RECEIVED", "OLDALE_TOWN", "FIRST_WILD_ENCOUNTER", 
+                "FIRST_POKEMON_CAUGHT", "PETALBURG_CITY", "RUSTBORO_CITY", 
+                "STONE_BADGE", "DEWFORD_TOWN", "KNUCKLE_BADGE", "SLATEPORT_CITY",
+                "MAUVILLE_CITY", "DYNAMO_BADGE", "POKEDEX_5_SEEN", "POKEDEX_10_SEEN",
+                "EARNED_1000_POKEDOLLARS", "PARTY_OF_TWO"
+            ]
+            
+            for milestone_id in milestones_to_check:
+                if not self.milestone_tracker.is_completed(milestone_id):
+                    if self._check_milestone_condition(milestone_id, game_state):
+                        self.milestone_tracker.mark_completed(milestone_id)
+        
+        except Exception as e:
+            logger.warning(f"Error checking milestones: {e}")
+    
+    def _check_milestone_condition(self, milestone_id: str, game_state: Dict[str, Any]) -> bool:
+        """Check if a specific milestone condition is met based on current game state"""
+        try:
+            # Test milestones (should always work)
+            if milestone_id == "GAME_RUNNING":
+                return True  # If we can execute this, game is running
+            elif milestone_id == "HAS_PARTY":
+                if game_state:
+                    party = game_state.get("player", {}).get("party", [])
+                    return len(party) > 0
+                return False
+            
+            # Location-based milestones - check current location
+            elif milestone_id == "LITTLEROOT_TOWN":
+                if game_state:
+                    location = game_state.get("player", {}).get("location", "")
+                    return "LITTLEROOT" in str(location).upper()
+                return False
+            elif milestone_id == "OLDALE_TOWN":
+                if game_state:
+                    # Only count Oldale Town if we've already been to Littleroot Town
+                    if not self.milestone_tracker.is_completed("LITTLEROOT_TOWN"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "OLDALE" in str(location).upper()
+                return False
+            elif milestone_id == "PETALBURG_CITY":
+                if game_state:
+                    # Only count Petalburg City if we've already been to Littleroot Town
+                    # (Petalburg flag gets set on title screen, so we need this dependency)
+                    if not self.milestone_tracker.is_completed("LITTLEROOT_TOWN"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "PETALBURG" in str(location).upper()
+                return False
+            elif milestone_id == "RUSTBORO_CITY":
+                if game_state:
+                    # Only count Rustboro City if we've already been to Petalburg City
+                    if not self.milestone_tracker.is_completed("PETALBURG_CITY"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "RUSTBORO" in str(location).upper()
+                return False
+            elif milestone_id == "DEWFORD_TOWN":
+                if game_state:
+                    # Only count Dewford Town if we've already been to Rustboro City
+                    if not self.milestone_tracker.is_completed("RUSTBORO_CITY"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "DEWFORD" in str(location).upper()
+                return False
+            elif milestone_id == "SLATEPORT_CITY":
+                if game_state:
+                    # Only count Slateport City if we've already been to Dewford Town
+                    if not self.milestone_tracker.is_completed("DEWFORD_TOWN"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "SLATEPORT" in str(location).upper()
+                return False
+            elif milestone_id == "MAUVILLE_CITY":
+                if game_state:
+                    # Only count Mauville City if we've already been to Slateport City
+                    if not self.milestone_tracker.is_completed("SLATEPORT_CITY"):
+                        return False
+                    location = game_state.get("player", {}).get("location", "")
+                    return "MAUVILLE" in str(location).upper()
+                return False
+                
+            # Pokemon system milestones - check party/pokedex state  
+            elif milestone_id == "STARTER_CHOSEN":
+                if game_state:
+                    party = game_state.get("player", {}).get("party", [])
+                    return len(party) >= 1 and any(p.get("species_name", "").strip() for p in party)
+                return False
+            elif milestone_id == "POKEDEX_RECEIVED":
+                if game_state:
+                    pokedex_seen = game_state.get("game", {}).get("pokedex_seen", 0)
+                    return (pokedex_seen if isinstance(pokedex_seen, int) else 0) >= 1
+                return False
+                
+            # Badge milestones - check badge count/list
+            elif milestone_id == "STONE_BADGE":
+                if game_state:
+                    badges = game_state.get("game", {}).get("badges", [])
+                    if isinstance(badges, list):
+                        return len(badges) >= 1 or any("Stone" in str(b) for b in badges)
+                    elif isinstance(badges, int):
+                        return badges >= 1
+                return False
+            elif milestone_id == "KNUCKLE_BADGE":
+                if game_state:
+                    badges = game_state.get("game", {}).get("badges", [])
+                    if isinstance(badges, list):
+                        return len(badges) >= 2 or any("Knuckle" in str(b) for b in badges)
+                    elif isinstance(badges, int):
+                        return badges >= 2
+                return False
+            elif milestone_id == "DYNAMO_BADGE":
+                if game_state:
+                    badges = game_state.get("game", {}).get("badges", [])
+                    if isinstance(badges, list):
+                        return len(badges) >= 3 or any("Dynamo" in str(b) for b in badges)
+                    elif isinstance(badges, int):
+                        return badges >= 3
+                return False
+                
+            # Progress-based milestones
+            elif milestone_id == "FIRST_POKEMON_CAUGHT":
+                if game_state:
+                    pokedex_caught = game_state.get("game", {}).get("pokedex_caught", 0)
+                    return (pokedex_caught if isinstance(pokedex_caught, int) else 0) >= 1
+                return False
+            elif milestone_id == "FIRST_WILD_ENCOUNTER":
+                if game_state:
+                    pokedex_seen = game_state.get("game", {}).get("pokedex_seen", 0)
+                    return (pokedex_seen if isinstance(pokedex_seen, int) else 0) >= 2
+                return False
+            elif milestone_id == "PARTY_OF_TWO":
+                if game_state:
+                    party = game_state.get("player", {}).get("party", [])
+                    valid_pokemon = [p for p in party if p.get("species_name", "").strip() and p.get("species_name", "").strip() != "NONE"]
+                    return len(valid_pokemon) >= 2
+                return False
+            elif milestone_id == "EARNED_1000_POKEDOLLARS":
+                if game_state:
+                    money = game_state.get("game", {}).get("money", 0)
+                    return (money if isinstance(money, int) else 0) >= 1000
+                return False
+            elif milestone_id == "POKEDEX_5_SEEN":
+                if game_state:
+                    pokedex_seen = game_state.get("game", {}).get("pokedex_seen", 0)
+                    return (pokedex_seen if isinstance(pokedex_seen, int) else 0) >= 5
+                return False
+            elif milestone_id == "POKEDEX_10_SEEN":
+                if game_state:
+                    pokedex_seen = game_state.get("game", {}).get("pokedex_seen", 0)
+                    return (pokedex_seen if isinstance(pokedex_seen, int) else 0) >= 10
+                return False
+                
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error checking milestone condition {milestone_id}: {e}")
+            return False
+    
+    def get_milestones(self) -> Dict[str, Any]:
+        """Get current milestone data and progress"""
+        try:
+            # Get current game state and update milestones
+            # Use cached state if available to avoid redundant calls
+            game_state = self.get_comprehensive_state()
+            # Only update milestones occasionally to avoid performance issues
+            import time
+            current_time = time.time()
+            if not hasattr(self, '_last_milestone_update') or current_time - self._last_milestone_update > 1.0:  # Update at most once per second
+                self.check_and_update_milestones(game_state)
+                self._last_milestone_update = current_time
+            
+            # Define milestone progression in logical order  
+            milestone_definitions = [
+                # Test milestones
+                {"id": "GAME_RUNNING", "name": "GAME_RUNNING", "category": "basic"},
+                {"id": "HAS_PARTY", "name": "HAS_PARTY", "category": "pokemon"},
+                
+                # Location milestones  
+                {"id": "LITTLEROOT_TOWN", "name": "LITTLEROOT_TOWN", "category": "location"},
+                {"id": "OLDALE_TOWN", "name": "OLDALE_TOWN", "category": "location"},
+                {"id": "PETALBURG_CITY", "name": "PETALBURG_CITY", "category": "location"},
+                {"id": "RUSTBORO_CITY", "name": "RUSTBORO_CITY", "category": "location"},
+                {"id": "DEWFORD_TOWN", "name": "DEWFORD_TOWN", "category": "location"},
+                {"id": "SLATEPORT_CITY", "name": "SLATEPORT_CITY", "category": "location"},
+                {"id": "MAUVILLE_CITY", "name": "MAUVILLE_CITY", "category": "location"},
+                
+                # Pokemon milestones
+                {"id": "STARTER_CHOSEN", "name": "STARTER_CHOSEN", "category": "pokemon"},
+                {"id": "POKEDEX_RECEIVED", "name": "POKEDEX_RECEIVED", "category": "pokemon"},
+                {"id": "FIRST_WILD_ENCOUNTER", "name": "FIRST_WILD_ENCOUNTER", "category": "pokemon"},
+                {"id": "FIRST_POKEMON_CAUGHT", "name": "FIRST_POKEMON_CAUGHT", "category": "pokemon"},
+                {"id": "PARTY_OF_TWO", "name": "PARTY_OF_TWO", "category": "pokemon"},
+                
+                # Badge milestones
+                {"id": "STONE_BADGE", "name": "STONE_BADGE", "category": "badge"},
+                {"id": "KNUCKLE_BADGE", "name": "KNUCKLE_BADGE", "category": "badge"},
+                {"id": "DYNAMO_BADGE", "name": "DYNAMO_BADGE", "category": "badge"},
+                
+                # Progress milestones
+                {"id": "POKEDEX_5_SEEN", "name": "POKEDEX_5_SEEN", "category": "progress"},
+                {"id": "POKEDEX_10_SEEN", "name": "POKEDEX_10_SEEN", "category": "progress"},
+                {"id": "EARNED_1000_POKEDOLLARS", "name": "EARNED_1000_POKEDOLLARS", "category": "progress"},
+            ]
+            
+            # Build milestone list with persistent data
+            milestones = []
+            for i, milestone_def in enumerate(milestone_definitions):
+                milestone_data = self.milestone_tracker.get_milestone_data(milestone_def["id"])
+                milestones.append({
+                    "id": i + 1,
+                    "name": milestone_def["name"],
+                    "category": milestone_def["category"],
+                    "completed": milestone_data["completed"],
+                    "timestamp": milestone_data.get("timestamp", None)
+                })
+            
+            # Calculate summary stats
+            completed_count = sum(1 for m in milestones if m["completed"])
+            total_count = len(milestones)
+            
+            # Handle location data properly
+            location_data = game_state.get("player", {}).get("location", "")
+            if isinstance(location_data, dict):
+                current_location = location_data.get("map_name", "UNKNOWN")
+            else:
+                current_location = str(location_data) if location_data else "UNKNOWN"
+            
+            # Handle badges data properly
+            badges_data = game_state.get("game", {}).get("badges", 0)
+            if isinstance(badges_data, list):
+                badge_count = sum(1 for b in badges_data if b)
+            else:
+                badge_count = badges_data if isinstance(badges_data, int) else 0
+            
+            return {
+                "milestones": milestones,
+                "completed": completed_count,
+                "total": total_count,
+                "progress": completed_count / total_count if total_count > 0 else 0,
+                "current_location": current_location,
+                "badges": badge_count,
+                "pokedex_seen": game_state.get("game", {}).get("pokedex_seen", 0),
+                "pokedex_caught": game_state.get("game", {}).get("pokedex_caught", 0),
+                "party_size": len(game_state.get("player", {}).get("party", [])),
+                "tracking_system": "file_based",
+                "milestone_file": self.milestone_tracker.filename
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting milestones: {e}")
+            # Fallback to basic milestones if memory reading fails
+            basic_milestones = [
+                {"id": 1, "name": "GAME_STARTED", "category": "basic", "completed": True, "timestamp": time.time()},
+                {"id": 2, "name": "EMULATOR_RUNNING", "category": "basic", "completed": True, "timestamp": time.time()},
+            ]
+            return {
+                "milestones": basic_milestones,
+                "completed": 2,
+                "total": 2,
+                "progress": 1.0,
+                "tracking_system": "fallback",
+                "error": str(e)
+            }
