@@ -497,6 +497,38 @@ python agent.py --backend local --model-name "your-model" --device cuda
 - **Local models**: Best for extended runs, no API costs
 - **Debug mode**: Use `--debug-state` only when needed (verbose output)
 
+## Fair Use and Modification Guidelines
+
+### ✅ Allowed Modifications
+
+You are encouraged to modify and improve the agent in the following ways:
+
+- **Agent Behavior**: Edit prompts in `agent/` directory to change how the agent thinks and acts, adding new planning, memory, or training
+- **VLM Backends**: Add new VLM backends or modify existing ones in `utils/vlm.py`
+- **Error Handling**: Improve error handling, retry logic, and fallback mechanisms
+- **Logging and Debugging**: Enhance logging, add debugging tools, and improve observability
+- **Testing**: Add new tests, improve test coverage, and enhance the testing framework
+- **Documentation**: Update README, add comments, and improve code documentation
+- **Performance**: Optimize code performance, add caching, and improve efficiency
+- **UI/UX**: Enhance the web interface, add new visualizations, and improve user experience
+- **Utilities**: Add helper functions, improve state formatting, and enhance utility modules
+
+### ❌ Restricted Modifications
+
+The following modifications are **NOT ALLOWED** for competitive submissions:
+
+- **Memory Reading**: Do not modify `pokemon_env/memory_reader.py` or any memory reading logic
+- **State Observation**: Do not change how game state is extracted or interpreted from memory
+- **Emulator Core**: Do not modify the mGBA emulator integration or core emulation logic
+- **Anti-Cheat Bypass**: Do not attempt to bypass or modify the anti-cheat verification system
+- **Game State Manipulation**: Do not directly manipulate game memory or state outside of normal button inputs
+
+### 🎯 What This Means
+
+- **Focus on AI/ML**: Improve the agent's decision-making, planning, and reasoning
+- **Enhance Infrastructure**: Make the system more robust, debuggable, and maintainable
+- **Preserve Fairness**: Keep the core game state observation system unchanged for fair competition
+
 ## Submission Instructions
 
 Ready to compete in the PokéAgent Challenge? Follow these submission guidelines to participate in Track 2.
