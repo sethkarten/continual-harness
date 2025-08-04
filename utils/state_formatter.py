@@ -568,7 +568,7 @@ def get_party_health_summary(state_data):
             hp = pokemon.get('current_hp', 0)
             max_hp = pokemon.get('max_hp', 1)
             status = pokemon.get('status', 'Normal')
-            species = pokemon.get('species', 'Unknown')
+            species = pokemon.get('species_name', pokemon.get('species', 'Unknown Pokemon'))
             
             if hp > 0 and status == 'Normal':
                 healthy_count += 1

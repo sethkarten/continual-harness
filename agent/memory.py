@@ -21,9 +21,9 @@ def extract_key_state_info(state_data):
     
     key_info = {
         'state_summary': state_summary,
-        'player_name': player_data.get('name', 'Unknown'),
+        'player_name': player_data.get('name', 'Player'),
         'money': player_data.get('money') or game_data.get('money', 0),
-        'current_map': map_info.get('current_map', 'Unknown'),
+        'current_map': player_data.get('location', 'Unknown Location'),
         'in_battle': game_data.get('in_battle', False),
         'party_health': f"{party_health['healthy_count']}/{party_health['total_count']}",
         'critical_pokemon': party_health['critical_pokemon']
@@ -40,7 +40,8 @@ def extract_key_state_info(state_data):
     # Battle opponent
     if game_data.get('battle_info'):
         battle = game_data['battle_info']
-        key_info['battle_opponent'] = battle.get('opponent_pokemon', {}).get('species', 'Unknown')
+        opponent_pokemon = battle.get('opponent_pokemon', {})
+        key_info['battle_opponent'] = opponent_pokemon.get('species_name', opponent_pokemon.get('species', 'Unknown Pokemon'))
     
     # Traversability summary
     if 'traversability' in map_info and map_info['traversability']:
@@ -101,7 +102,7 @@ def memory_step(memory_context, current_plan, recent_actions, observation_buffer
             state_summary = state.get('state_summary', '')
             
             # Check for significant events
-            current_map = state.get('current_map', 'Unknown')
+            current_map = state.get('current_map', 'Unknown Location')
             current_battle = state.get('in_battle', False)
             
             if current_map != previous_map and previous_map is not None:
@@ -110,7 +111,7 @@ def memory_step(memory_context, current_plan, recent_actions, observation_buffer
             
             if current_battle != previous_battle_state:
                 if current_battle:
-                    opponent = state.get('battle_opponent', 'Unknown')
+                    opponent = state.get('battle_opponent', 'Unknown Pokemon')
                     key_events.append(f"Entered battle vs {opponent}")
                     logger.info(f"[MEMORY] Key event: Entered battle vs {opponent}")
                 else:

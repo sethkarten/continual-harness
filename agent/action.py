@@ -37,10 +37,10 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
         if battle_info:
             if 'player_pokemon' in battle_info:
                 player_pkmn = battle_info['player_pokemon']
-                action_context.append(f"Your Pokemon: {player_pkmn.get('species', 'Unknown')} (Lv.{player_pkmn.get('level', '?')}) HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
+                action_context.append(f"Your Pokemon: {player_pkmn.get('species_name', player_pkmn.get('species', 'Unknown'))} (Lv.{player_pkmn.get('level', '?')}) HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
             if 'opponent_pokemon' in battle_info:
                 opp_pkmn = battle_info['opponent_pokemon']
-                action_context.append(f"Opponent: {opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')}) HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
+                action_context.append(f"Opponent: {opp_pkmn.get('species_name', opp_pkmn.get('species', 'Unknown'))} (Lv.{opp_pkmn.get('level', '?')}) HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
     else:
         action_context.append("=== OVERWORLD MODE ===")
         
