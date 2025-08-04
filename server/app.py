@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 env = None
 running = True
 step_count = 0
+agent_step_count = 0  # Track agent steps separately from frame steps
 current_obs = None
 fps = 30  # Changed from 60 to 30 for 4x speedup during dialog
 
@@ -480,8 +481,23 @@ async def get_comprehensive_state():
         raise HTTPException(status_code=400, detail="Emulator not initialized")
     
     try:
-        # Get comprehensive state from emulator
+        # Clear the comprehensive state cache to ensure fresh data
+        if hasattr(env, '_cached_state'):
+            delattr(env, '_cached_state')
+        if hasattr(env, '_cached_state_time'):
+            delattr(env, '_cached_state_time')
+        
+        # Get fresh comprehensive state from emulator
         state = env.get_comprehensive_state()
+        
+        # Ensure game state is consistent with cached dialog state
+        # Use the same cached dialog state as the status endpoint
+        is_dialog = env._cached_dialog_state if env else False
+        if is_dialog:
+            state["game"]["game_state"] = "dialog"
+        else:
+            # Force overworld if not in dialog (respect 5-second timeout)
+            state["game"]["game_state"] = "overworld"
         
         # Update milestones based on current state
         # Only update milestones occasionally to avoid performance issues
@@ -673,15 +689,127 @@ async def load_state(filename: str):
 
 @app.get("/agent")
 async def get_agent_thinking():
-    """Get current agent thinking status"""
-    # This would connect to your agent system
-    # For now, returning placeholder data
-    return {
-        "status": "thinking",
-        "current_thought": "Analyzing game state and planning next actions...",
-        "confidence": 0.85,
-        "timestamp": time.time()
-    }
+    """Get current agent thinking status and recent LLM interactions"""
+    try:
+        # Get the most recent LLM log file
+        import glob
+        import os
+        from utils.llm_logger import get_llm_logger
+        
+        # Get recent LLM interactions
+        llm_logger = get_llm_logger()
+        session_summary = llm_logger.get_session_summary()
+        
+                # Find all LLM log files and get interactions from all of them
+        import glob
+        log_files = glob.glob("llm_logs/llm_log_*.jsonl")
+        logger.info(f"Found {len(log_files)} log files: {log_files}")
+        
+        # Get recent interactions from all log files
+        recent_interactions = []
+        for log_file in log_files:
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        # Get interactions from this file
+                        for line in lines:
+                            try:
+                                entry = json.loads(line.strip())
+                                if entry.get("type") == "interaction":
+                                    recent_interactions.append({
+                                        "type": entry.get("interaction_type", "unknown"),
+                                        "prompt": entry.get("prompt", ""),
+                                        "response": entry.get("response", ""),
+                                        "duration": entry.get("duration", 0),
+                                        "timestamp": entry.get("timestamp", "")
+                                    })
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    logger.error(f"Error reading LLM log {log_file}: {e}")
+        
+        # Sort by timestamp and keep only the last 3 interactions
+        recent_interactions.sort(key=lambda x: x.get("timestamp", ""))
+        recent_interactions = recent_interactions[-3:]
+        logger.info(f"Found {len(recent_interactions)} recent interactions")
+        
+        # Format the agent thinking display
+        if recent_interactions:
+            current_thought = f"Recent LLM interactions:\n"
+            for i, interaction in enumerate(reversed(recent_interactions)):
+                current_thought += f"\n{i+1}. {interaction['type'].upper()} ({interaction['duration']:.2f}s)\n"
+                current_thought += f"   Q: {interaction['prompt']}\n"
+                current_thought += f"   A: {interaction['response']}\n"
+        else:
+            current_thought = "No recent LLM interactions. Agent is ready to process game state."
+        
+        with step_lock:
+            current_step = agent_step_count  # Use agent step count instead of frame step count
+        
+        return {
+            "status": "thinking",
+            "current_thought": current_thought,
+            "confidence": 0.85,
+            "timestamp": time.time(),
+            "llm_session": session_summary,
+            "recent_interactions": recent_interactions,
+            "current_step": current_step
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in agent thinking: {e}")
+        return {
+            "status": "error",
+            "current_thought": f"Error getting agent thinking: {str(e)}",
+            "confidence": 0.0,
+            "timestamp": time.time()
+        }
+
+@app.post("/agent_step")
+async def update_agent_step():
+    """Update the agent step count (called by agent.py)"""
+    global agent_step_count
+    
+    with step_lock:
+        agent_step_count += 1
+    
+    return {"status": "updated", "agent_step": agent_step_count}
+
+@app.get("/llm_logs")
+async def get_llm_logs():
+    """Get recent LLM log entries"""
+    try:
+        from utils.llm_logger import get_llm_logger
+        
+        llm_logger = get_llm_logger()
+        session_summary = llm_logger.get_session_summary()
+        
+        # Get recent log entries
+        recent_entries = []
+        if os.path.exists(llm_logger.log_file):
+            try:
+                with open(llm_logger.log_file, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    # Get the last 20 entries
+                    for line in lines[-20:]:
+                        try:
+                            entry = json.loads(line.strip())
+                            recent_entries.append(entry)
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                logger.error(f"Error reading LLM log: {e}")
+        
+        return {
+            "session_summary": session_summary,
+            "recent_entries": recent_entries,
+            "log_file": llm_logger.log_file
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting LLM logs: {e}")
+        return {"error": str(e)}
 
 # Milestone checking is now handled by the emulator
 

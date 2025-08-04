@@ -1,0 +1,26 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1754342916.7675512,
+      "first_completed": 1754342916.7675512
+    },
+    "HAS_PARTY": {
+      "completed": true,
+      "timestamp": 1754342916.768081,
+      "first_completed": 1754342916.768081
+    },
+    "STARTER_CHOSEN": {
+      "completed": true,
+      "timestamp": 1754342916.7689168,
+      "first_completed": 1754342916.7689168
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1754342916.7758095,
+      "first_completed": 1754342916.7758095
+    }
+  },
+  "last_updated": 1754342916.7758462,
+  "version": "1.0"
+}

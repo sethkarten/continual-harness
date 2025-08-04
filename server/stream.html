@@ -38,11 +38,12 @@
             font-weight: bold;
             margin-right: 20px;
             text-shadow: 0 0 5px #ff6177;
+            font-size: 24px;
         }
         
         .header-title {
             color: #33ff33;
-            font-size: 16px;
+            font-size: 20px;
         }
         
         .content {
@@ -233,8 +234,46 @@
         
         .agent-thinking {
             height: 340px;
-            line-height: 1.4;
+            line-height: 1.6;
             overflow-y: auto;
+            padding: 5px;
+            background-color: #0a0a0a;
+            border: 1px solid #33ff33;
+            font-family: 'VT323', monospace;
+            font-size: 16px;
+            word-wrap: break-word;
+            white-space: normal;
+            text-align: left;
+        }
+
+        .llm-entry {
+            margin-bottom: 4px;
+            font-size: 16px;
+            word-wrap: break-word;
+            white-space: normal;
+            line-height: 1.4;
+            text-align: left;
+            display: block;
+            padding: 0;
+            margin-left: 0;
+        }
+
+        .llm-step {
+            color: #ff6177;
+            font-weight: bold;
+            margin-right: 8px;
+            display: inline;
+            float: none;
+        }
+
+        .llm-message {
+            color: #33ff33;
+            word-wrap: break-word;
+            white-space: normal;
+            display: inline;
+            float: none;
+            padding: 0;
+            margin: 0;
         }
 
 
@@ -435,7 +474,7 @@
         </div>
         
         <div class="brain-panel">
-                                    <div class="brain-section">
+            <div class="brain-section">
                 <div class="section-title"># AGENT_THINKING</div>
                 <div id="agent-thinking" class="agent-thinking">INITIALIZING AGENT...</div>
             </div>
@@ -502,10 +541,35 @@
                 const response = await fetch('http://127.0.0.1:8000/agent');
                 const data = await response.json();
                 
-                document.getElementById('agent-thinking').textContent = data.current_thought;
+                const agentThinkingDiv = document.getElementById('agent-thinking');
+                
+                if (data.recent_interactions && data.recent_interactions.length > 0) {
+                    // Format all LLM interactions in condensed format: "Step X: <msg>"
+                    let html = '';
+                    data.recent_interactions.forEach((interaction, index) => {
+                        // Calculate step number based on current step and interaction index
+                        const baseStep = data.current_step || 0;
+                        const stepNumber = baseStep; // - (data.recent_interactions.length - 1 - index);
+                        
+                        // Trim whitespace from the response
+                        const trimmedResponse = interaction.response.trim();
+                        
+                        html += `<div class="llm-entry">
+                            <span class="llm-step">Step ${stepNumber}:</span>
+                            <span class="llm-message">${trimmedResponse}</span>
+                        </div>`;
+                    });
+                    agentThinkingDiv.innerHTML = html;
+                    
+                    // Auto-scroll to bottom to show most recent
+                    agentThinkingDiv.scrollTop = agentThinkingDiv.scrollHeight;
+                } else {
+                    agentThinkingDiv.textContent = data.current_thought || 'No recent LLM interactions';
+                }
                 
             } catch (error) {
                 console.error('Error fetching agent thinking:', error);
+                document.getElementById('agent-thinking').textContent = 'Error loading agent thinking';
             }
         }
 

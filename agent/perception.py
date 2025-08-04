@@ -63,6 +63,7 @@ def perception_step(frame, state_data, vlm):
     scene_response = vlm.get_query(frame, scene_check_prompt, "PERCEPTION-SCENE_CHECK").strip().lower()
     slow_thinking_needed = ("yes" in scene_response)
 
+    '''
     # If on a map, try to generate a traversability analysis
     if ("map" in observation.lower() or "navigating" in observation.lower() or "terrain" in observation.lower()) and not state_data.get('game', {}).get('in_battle', False):
         map_prompt = f"""
@@ -98,7 +99,8 @@ def perception_step(frame, state_data, vlm):
         text_map = vlm.get_query(frame, map_prompt, "PERCEPTION-MAP")
         observation = {"description": observation, "text_map": text_map, "state_data": state_context}
     else:
-        observation = {"description": observation, "state_data": state_context}
+    '''
+    observation = {"description": observation, "state_data": state_context}
     
     logger.info(f"[PERCEPTION] Slow thinking needed: {slow_thinking_needed}")
     return observation, slow_thinking_needed 

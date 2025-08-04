@@ -159,8 +159,13 @@
       "completed": false,
       "timestamp": null,
       "description": "Player has caught their first Pokemon"
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1754342929.3187594,
+      "first_completed": 1754342929.3187594
     }
   },
-  "last_updated": "2025-08-04T14:58:00Z",
+  "last_updated": 1754342929.318784,
   "version": "1.0"
-} 
+}

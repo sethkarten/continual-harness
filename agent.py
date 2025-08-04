@@ -9,6 +9,7 @@ from PIL import Image
 from utils.vlm import VLM
 from utils.state_formatter import format_state_summary, format_state_for_debug, get_party_health_summary
 from utils.anticheat import AntiCheatTracker
+from utils.llm_logger import get_llm_logger
 from agent.perception import perception_step
 from agent.memory import memory_step
 from agent.planning import planning_step
@@ -40,6 +41,7 @@ def main():
     parser.add_argument("--device", type=str, default="auto", help="Device for local models (auto, cpu, cuda)")
     parser.add_argument("--load-in-4bit", action="store_true", default=True, help="Use 4-bit quantization for local models")
     parser.add_argument("--debug-state", action="store_true", help="Enable detailed state debugging")
+    parser.add_argument("--action-delay", type=float, default=0.3, help="Delay after actions in seconds (default: 0.3)")
     args = parser.parse_args()
 
     logger.info("="*60)
@@ -52,6 +54,7 @@ def main():
     elif args.backend == "local":
         logger.info(f"Device: {args.device}, 4-bit quantization: {args.load_in_4bit}")
     logger.info(f"Debug state logging: {args.debug_state}")
+    logger.info(f"Action delay: {args.action_delay}s")
     logger.info("Make sure server/app.py is running first!")
     logger.info("Press Ctrl+C to stop")
     
@@ -81,10 +84,16 @@ def main():
     last_action = None
     slow_thinking_needed = True
 
+    # Initialize LLM logger
+    llm_logger = get_llm_logger()
+    
     # Create httpx client for HTTP requests
     with httpx.Client(timeout=10.0) as client:
         while True:
             logger.info(f"\n{'='*20} STEP {step} {'='*20}")
+            
+            # Log step start
+            llm_logger.log_step_start(step, "agent_step")
             
             # Record start time for decision timing
             decision_start_time = time.time()
@@ -100,6 +109,9 @@ def main():
                 
                 # Create state hash for integrity verification
                 state_hash = anticheat_tracker.create_state_hash(state_data)
+                
+                # Log state snapshot
+                llm_logger.log_state_snapshot(state_data, step)
                 
                 # Log state summary using utility
                 state_summary = format_state_summary(state_data)
@@ -135,7 +147,7 @@ def main():
                 logger.info(f"[STEP-{step}] Starting MEMORY UPDATE...")
                 memory_context = memory_step(memory_context, current_plan, recent_actions, observation_buffer, vlm)
                 logger.info(f"[STEP-{step}] MEMORY UPDATE COMPLETE")
-                print(f"[{step}] Memory updated: {memory_context[:500]}..." if len(memory_context) > 500 else f"[{step}] Memory updated: {memory_context}")
+                print(f"[{step}] Memory updated: {memory_context}")
                 observation_buffer = []
                 slow_thinking_needed = True
             else:
@@ -152,6 +164,10 @@ def main():
             action = action_step(memory_context, current_plan, observation, frame, state_data, recent_actions, vlm)
             logger.info(f"[STEP-{step}] ACTION DECISION COMPLETE")
             print(f"[{step}] Action: {action}")
+            
+            # Log the action
+            action_str = str(action) if isinstance(action, list) else action
+            llm_logger.log_action(action_str, step, f"Based on observation: {observation}")
             
             # Calculate decision time
             decision_time = time.time() - decision_start_time
@@ -184,7 +200,23 @@ def main():
                     print(f"Error sending action {act}: {e}")
                 time.sleep(0.1)  # Small delay between actions
 
-            step += 1
+            # Add delay after all actions are executed to ensure game state updates
+            time.sleep(args.action_delay * len(actions_to_send))  # Wait for emulator to process actions and update state
+
+            # Log step completion
+            llm_logger.log_step_end(step, "agent_step", decision_time, f"Action: {action}, Observation: {observation}")
+            
+            # Update server's agent step count
+            try:
+                resp = client.post(f"{SERVER_URL}/agent_step")
+                if resp.status_code == 200:
+                    logger.info(f"[STEP-{step}] Agent step count updated on server")
+                else:
+                    logger.warning(f"Failed to update agent step count. Status: {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Error updating agent step count: {e}")
+            
+            step += 1  # Increment by 1 for each agent step, not for each action
             logger.info(f"[STEP-{step-1}] STEP COMPLETE - Decision time: {decision_time:.3f}s\n")
             # time.sleep(0.5)  # Slow down for demo/debug
 

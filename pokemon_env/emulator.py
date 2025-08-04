@@ -105,7 +105,7 @@ class MilestoneTracker:
             base_name = os.path.splitext(os.path.basename(state_filename))[0]
             milestone_filename = os.path.join(state_dir, f"{base_name}_milestones.json")
             
-            original_filename = self.filename
+            # Update the filename to the state-specific file permanently
             self.filename = milestone_filename
             logger.info(f"Loading milestones from state-specific file: {milestone_filename}")
             
@@ -113,20 +113,20 @@ class MilestoneTracker:
                 self.load_from_file()
                 logger.info(f"Loaded {len(self.milestones)} milestones for state {state_filename}")
             except FileNotFoundError:
-                logger.warning(f"Milestone file not found: {milestone_filename}, using default milestones")
-                # Fall back to default milestone file
-                self.filename = original_filename
-                self.load_from_file()
+                logger.info(f"Milestone file not found: {milestone_filename}, starting fresh milestones for this state")
+                # Start with empty milestones for this state, don't fall back to default
+                self.milestones = {}
+                # Save the empty milestone file to establish the state-specific milestone file
+                self.save_to_file()
+                logger.info(f"Created new milestone file: {milestone_filename}")
             except Exception as e:
                 logger.error(f"Error loading milestone file {milestone_filename}: {e}")
                 # Fall back to default milestone file
-                self.filename = original_filename
+                self.filename = "milestones_progress.json"
                 self.load_from_file()
-            finally:
-                # Restore original filename for future saves
-                self.filename = original_filename
         else:
-            # Load from default milestone file
+            # No state filename provided, use default milestone file
+            self.filename = "milestones_progress.json"
             logger.info(f"Loading milestones from default file: {self.filename}")
             self.load_from_file()
     

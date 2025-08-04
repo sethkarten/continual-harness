@@ -12,6 +12,9 @@ import numpy as np
 # Set up module logging
 logger = logging.getLogger(__name__)
 
+# Import LLM logger
+from utils.llm_logger import log_llm_interaction, log_llm_error
+
 # Define the retry decorator with exponential backoff
 def retry_with_exponential_backoff(
     func,
@@ -81,6 +84,8 @@ class OpenAIBackend(VLMBackend):
     
     def get_query(self, img: Union[Image.Image, np.ndarray], text: str, module_name: str = "Unknown") -> str:
         """Process an image and text prompt using OpenAI API"""
+        start_time = time.time()
+        
         # Handle both PIL Images and numpy arrays
         if hasattr(img, 'convert'):  # It's a PIL Image
             image = img
@@ -101,42 +106,68 @@ class OpenAIBackend(VLMBackend):
             ]
         }]
         
-        # Log the prompt
-        prompt_preview = text[:2000] + "..." if len(text) > 2000 else text
-        logger.info(f"[{module_name}] OPENAI VLM IMAGE QUERY:")
-        logger.info(f"[{module_name}] PROMPT: {prompt_preview}")
-        
-        response = self._call_completion(messages)
-        result = response.choices[0].message.content
-        
-        # Log the response
-        result_preview = result[:1000] + "..." if len(result) > 1000 else result
-        logger.info(f"[{module_name}] RESPONSE: {result_preview}")
-        logger.info(f"[{module_name}] ---")
-        
-        return result
+        try:
+            response = self._call_completion(messages)
+            result = response.choices[0].message.content
+            duration = time.time() - start_time
+            
+            # Log the interaction
+            log_llm_interaction(
+                interaction_type=f"openai_{module_name}",
+                prompt=text,
+                response=result,
+                duration=duration,
+                metadata={"model": self.model_name, "backend": "openai", "has_image": True},
+                model_info={"model": self.model_name, "backend": "openai"}
+            )
+            
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            log_llm_error(
+                interaction_type=f"openai_{module_name}",
+                prompt=text,
+                error=str(e),
+                metadata={"model": self.model_name, "backend": "openai", "duration": duration, "has_image": True}
+            )
+            logger.error(f"OpenAI API error: {e}")
+            raise
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt using OpenAI API"""
+        start_time = time.time()
+        
         messages = [{
             "role": "user",
             "content": [{"type": "text", "text": text}]
         }]
         
-        # Log the prompt
-        prompt_preview = text[:2000] + "..." if len(text) > 2000 else text
-        logger.info(f"[{module_name}] OPENAI VLM TEXT QUERY:")
-        logger.info(f"[{module_name}] PROMPT: {prompt_preview}")
-        
-        response = self._call_completion(messages)
-        result = response.choices[0].message.content
-        
-        # Log the response
-        result_preview = result[:1000] + "..." if len(result) > 1000 else result
-        logger.info(f"[{module_name}] RESPONSE: {result_preview}")
-        logger.info(f"[{module_name}] ---")
-        
-        return result
+        try:
+            response = self._call_completion(messages)
+            result = response.choices[0].message.content
+            duration = time.time() - start_time
+            
+            # Log the interaction
+            log_llm_interaction(
+                interaction_type=f"openai_{module_name}",
+                prompt=text,
+                response=result,
+                duration=duration,
+                metadata={"model": self.model_name, "backend": "openai", "has_image": False},
+                model_info={"model": self.model_name, "backend": "openai"}
+            )
+            
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            log_llm_error(
+                interaction_type=f"openai_{module_name}",
+                prompt=text,
+                error=str(e),
+                metadata={"model": self.model_name, "backend": "openai", "duration": duration, "has_image": False}
+            )
+            logger.error(f"OpenAI API error: {e}")
+            raise
 
 class OpenRouterBackend(VLMBackend):
     """OpenRouter API backend"""
@@ -576,8 +607,58 @@ class VLM:
     
     def get_query(self, img: Union[Image.Image, np.ndarray], text: str, module_name: str = "Unknown") -> str:
         """Process an image and text prompt"""
-        return self.backend.get_query(img, text, module_name)
+        start_time = time.time()
+        
+        try:
+            result = self.backend.get_query(img, text, module_name)
+            duration = time.time() - start_time
+            
+            # Log the interaction
+            log_llm_interaction(
+                interaction_type=f"{self.backend.__class__.__name__.lower()}_{module_name}",
+                prompt=text,
+                response=result,
+                duration=duration,
+                metadata={"model": self.model_name, "backend": self.backend.__class__.__name__, "has_image": True},
+                model_info={"model": self.model_name, "backend": self.backend.__class__.__name__}
+            )
+            
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            log_llm_error(
+                interaction_type=f"{self.backend.__class__.__name__.lower()}_{module_name}",
+                prompt=text,
+                error=str(e),
+                metadata={"model": self.model_name, "backend": self.backend.__class__.__name__, "duration": duration, "has_image": True}
+            )
+            raise
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt"""
-        return self.backend.get_text_query(text, module_name)
+        start_time = time.time()
+        
+        try:
+            result = self.backend.get_text_query(text, module_name)
+            duration = time.time() - start_time
+            
+            # Log the interaction
+            log_llm_interaction(
+                interaction_type=f"{self.backend.__class__.__name__.lower()}_{module_name}",
+                prompt=text,
+                response=result,
+                duration=duration,
+                metadata={"model": self.model_name, "backend": self.backend.__class__.__name__, "has_image": False},
+                model_info={"model": self.model_name, "backend": self.backend.__class__.__name__}
+            )
+            
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            log_llm_error(
+                interaction_type=f"{self.backend.__class__.__name__.lower()}_{module_name}",
+                prompt=text,
+                error=str(e),
+                metadata={"model": self.model_name, "backend": self.backend.__class__.__name__, "duration": duration, "has_image": False}
+            )
+            raise

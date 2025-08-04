@@ -4,6 +4,7 @@
 *.cpython
 *.pem
 *.gba
+llm_log_*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -677,14 +677,8 @@ class PokemonEmeraldReader:
             if menu_state != 0:
                 return "menu"
             
-            # Check for dialog by reading dialog text
-            dialog_text = self.read_dialog()
-            if dialog_text and len(dialog_text.strip()) > 5:
-                return "dialog"
-            
-            # Fallback to overworld_freeze check
-            overworld_freeze = self._read_u8(0x02022B4C)
-            if overworld_freeze > 0:
+            # Check for dialog using the same timeout logic as is_in_dialog()
+            if self.is_in_dialog():
                 return "dialog"
             
             return "overworld"
