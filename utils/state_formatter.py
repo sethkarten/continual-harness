@@ -11,6 +11,25 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def format_state(state_data, format_type="summary", include_debug_info=False):
+    """
+    Format comprehensive state data into readable text.
+    
+    Args:
+        state_data (dict): The comprehensive state from /state endpoint
+        format_type (str): "summary" for one-line summary, "detailed" for multi-line LLM format
+        include_debug_info (bool): Whether to include extra debug information (for detailed format)
+    
+    Returns:
+        str: Formatted state text
+    """
+    if format_type == "summary":
+        return _format_state_summary(state_data)
+    elif format_type == "detailed":
+        return _format_state_detailed(state_data, include_debug_info)
+    else:
+        raise ValueError(f"Unknown format_type: {format_type}. Use 'summary' or 'detailed'")
+
 def format_state_for_llm(state_data, include_debug_info=False):
     """
     Format comprehensive state data into a readable context for the VLM.
@@ -21,6 +40,127 @@ def format_state_for_llm(state_data, include_debug_info=False):
     
     Returns:
         str: Formatted state context for LLM prompts
+    """
+    return format_state(state_data, format_type="detailed", include_debug_info=include_debug_info)
+
+def format_state_summary(state_data):
+    """
+    Create a concise one-line summary of the current state for logging.
+    
+    Args:
+        state_data (dict): The comprehensive state from /state endpoint
+    
+    Returns:
+        str: Concise state summary
+    """
+    return format_state(state_data, format_type="summary")
+
+def _format_state_summary(state_data):
+    """
+    Internal function to create a concise one-line summary of the current state.
+    """
+    player_data = state_data.get('player', {})
+    game_data = state_data.get('game', {})
+    
+    summary_parts = []
+    
+    # Player name
+    if player_data.get('name'):
+        summary_parts.append(f"Player: {player_data['name']}")
+    
+    # Location
+    location = player_data.get('location')
+    if location:
+        summary_parts.append(f"Location: {location}")
+    
+    # Position
+    position = player_data.get('position')
+    if position and isinstance(position, dict):
+        summary_parts.append(f"Pos: ({position.get('x', '?')}, {position.get('y', '?')})")
+    
+    # Facing direction
+    facing = player_data.get('facing')
+    if facing:
+        summary_parts.append(f"Facing: {facing}")
+    
+    # Game state
+    game_state = game_data.get('game_state')
+    if game_state:
+        summary_parts.append(f"State: {game_state}")
+    
+    # Battle status
+    if game_data.get('is_in_battle'):
+        summary_parts.append("In Battle")
+    
+    # Money
+    money = game_data.get('money')
+    if money is not None:
+        summary_parts.append(f"Money: ${money}")
+    
+    # Party information
+    party_data = player_data.get('party')
+    if party_data:
+        party_size = len(party_data)
+        if party_size > 0:
+            # Get first Pokemon details
+            first_pokemon = party_data[0]
+            species = first_pokemon.get('species_name', 'Unknown')
+            level = first_pokemon.get('level', '?')
+            hp = first_pokemon.get('current_hp', '?')
+            max_hp = first_pokemon.get('max_hp', '?')
+            status = first_pokemon.get('status', 'OK')
+            
+            summary_parts.append(f"Party: {party_size} pokemon")
+            summary_parts.append(f"Lead: {species} Lv{level} HP:{hp}/{max_hp} {status}")
+    
+    # Pokedex information
+    pokedex_seen = game_data.get('pokedex_seen')
+    pokedex_caught = game_data.get('pokedex_caught')
+    if pokedex_seen is not None:
+        summary_parts.append(f"Pokedex: {pokedex_caught or 0} caught, {pokedex_seen} seen")
+    
+    # Badges
+    badges = game_data.get('badges')
+    if badges:
+        if isinstance(badges, list):
+            badge_count = len(badges)
+        else:
+            badge_count = badges
+        summary_parts.append(f"Badges: {badge_count}")
+    
+    # Items
+    item_count = game_data.get('item_count')
+    if item_count is not None:
+        summary_parts.append(f"Items: {item_count}")
+    
+    # Game time
+    time_data = game_data.get('time')
+    if time_data and isinstance(time_data, (list, tuple)) and len(time_data) >= 3:
+        hours, minutes, seconds = time_data[:3]
+        summary_parts.append(f"Time: {hours:02d}:{minutes:02d}:{seconds:02d}")
+    
+    # Dialog text (if any)
+    dialog_text = game_data.get('dialog_text')
+    if dialog_text:
+        # Truncate dialog text to first 50 characters
+        dialog_preview = dialog_text[:50].replace('\n', ' ').strip()
+        if len(dialog_text) > 50:
+            dialog_preview += "..."
+        summary_parts.append(f"Dialog: {dialog_preview}")
+    
+    # Progress context (if available)
+    progress_context = game_data.get('progress_context')
+    if progress_context:
+        badges_obtained = progress_context.get('badges_obtained', 0)
+        visited_locations = progress_context.get('visited_locations', [])
+        if badges_obtained > 0:
+            summary_parts.append(f"Progress: {badges_obtained} badges, {len(visited_locations)} locations")
+    
+    return " | ".join(summary_parts) if summary_parts else "No state data"
+
+def _format_state_detailed(state_data, include_debug_info=False):
+    """
+    Internal function to create detailed multi-line state format for LLM prompts.
     """
     context_parts = []
     
@@ -39,6 +179,10 @@ def format_state_for_llm(state_data, include_debug_info=False):
     position = _get_player_position(player_data)
     if position:
         context_parts.append(f"Position: X={position.get('x', 'unknown')}, Y={position.get('y', 'unknown')}")
+    
+    # Facing direction
+    if 'facing' in player_data and player_data['facing']:
+        context_parts.append(f"Facing: {player_data['facing']}")
     
     # Money (check both player and game sections)
     money = player_data.get('money') or game_data.get('money')
@@ -63,53 +207,6 @@ def format_state_for_llm(state_data, include_debug_info=False):
         context_parts.extend(debug_context)
     
     return "\n".join(context_parts)
-
-def format_state_summary(state_data):
-    """
-    Create a concise one-line summary of the current state for logging.
-    
-    Args:
-        state_data (dict): The comprehensive state from /state endpoint
-    
-    Returns:
-        str: Concise state summary
-    """
-    player_data = state_data.get('player', {})
-    game_data = state_data.get('game', {})
-    map_info = state_data.get('map', {})
-    
-    summary_parts = []
-    
-    # Player name
-    if player_data.get('name'):
-        summary_parts.append(f"Player: {player_data['name']}")
-    
-    # Location
-    if map_info.get('current_map'):
-        summary_parts.append(f"Map: {map_info['current_map']}")
-    
-    # Position
-    position = _get_player_position(player_data)
-    if position:
-        summary_parts.append(f"Pos: ({position.get('x', '?')}, {position.get('y', '?')})")
-    
-    # Battle status
-    if game_data.get('in_battle'):
-        summary_parts.append("In Battle")
-    
-    # Money
-    money = player_data.get('money') or game_data.get('money')
-    if money is not None:
-        summary_parts.append(f"Money: ${money}")
-    
-    # Party size
-    party_data = player_data.get('party') or game_data.get('party')
-    if party_data:
-        party_size = _get_party_size(party_data)
-        if party_size > 0:
-            summary_parts.append(f"Party: {party_size} pokemon")
-    
-    return " | ".join(summary_parts) if summary_parts else "No state data"
 
 def format_state_for_debug(state_data):
     """
@@ -192,7 +289,7 @@ def _format_party_info(player_data, game_data):
             context_parts.append(f"Pokemon Party ({party_size} pokemon):")
             for i, pokemon in enumerate(pokemon_list[:6]):
                 if pokemon:
-                    species = pokemon.get('species', 'Unknown')
+                    species = pokemon.get('species_name', pokemon.get('species', 'Unknown'))
                     level = pokemon.get('level', '?')
                     hp = pokemon.get('current_hp', '?')
                     max_hp = pokemon.get('max_hp', '?')
@@ -220,21 +317,63 @@ def _format_map_info(map_info, include_debug_info=False):
     # Traversability information (key for navigation)
     if 'traversability' in map_info and map_info['traversability']:
         traversability = map_info['traversability']
+        metatile_info = map_info.get('metatile_info')
         context_parts.append(f"\n--- FULL TRAVERSABILITY MAP ({len(traversability)}x{len(traversability[0])}) ---")
         
         # Find player position (center of the grid)
         center_y = len(traversability) // 2
         center_x = len(traversability[0]) // 2
         
+        # Try to get facing direction from map_info or global state
+        facing_arrow = "P "
+        facing = None
+        if 'player_facing' in map_info:
+            facing = map_info['player_facing']
+        if not facing and 'state' in map_info and 'player' in map_info['state']:
+            facing = map_info['state']['player'].get('facing')
+        import inspect
+        frame = inspect.currentframe()
+        while frame:
+            if 'state_data' in frame.f_locals:
+                facing = frame.f_locals['state_data'].get('player', {}).get('facing')
+                break
+            frame = frame.f_back
+        if facing:
+            facing_map = {"North": "↑ ", "South": "↓ ", "West": "← ", "East": "→ "}
+            facing_arrow = facing_map.get(facing, "P ")
+        
         # Display the full traversability map
         for y in range(len(traversability)):
             row_str = ""
             for x in range(len(traversability[y])):
                 if y == center_y and x == center_x:
-                    row_str += "P "  # Player position
+                    row_str += facing_arrow  # Player position with facing
                 else:
                     cell = str(traversability[y][x])
-                    if cell == "0":
+                    # Try to get jump ledge direction from metatile_info if cell is 'J'
+                    if cell == "J" and metatile_info and y < len(metatile_info) and x < len(metatile_info[y]):
+                        behavior = metatile_info[y][x].get('behavior', '').upper()
+                        if "JUMP_EAST" in behavior:
+                            row_str += "→ "
+                        elif "JUMP_WEST" in behavior:
+                            row_str += "← "
+                        elif "JUMP_NORTH" in behavior:
+                            row_str += "↑ "
+                        elif "JUMP_SOUTH" in behavior:
+                            row_str += "↓ "
+                        elif "JUMP_NORTHEAST" in behavior:
+                            row_str += "↗ "
+                        elif "JUMP_NORTHWEST" in behavior:
+                            row_str += "↖ "
+                        elif "JUMP_SOUTHEAST" in behavior:
+                            row_str += "↘ "
+                        elif "JUMP_SOUTHWEST" in behavior:
+                            row_str += "↙ "
+                        else:
+                            row_str += "J "
+                    elif cell == "J":
+                        row_str += "J "
+                    elif cell == "0":
                         row_str += "# "  # Blocked
                     elif cell == ".":
                         row_str += ". "  # Normal
@@ -243,13 +382,31 @@ def _format_map_info(map_info, include_debug_info=False):
                     elif "WATER" in cell:
                         row_str += "W "  # Water
                     elif "JUMP" in cell:
-                        row_str += "J "  # Jump ledge
+                        # Show jump direction
+                        if "JUMP_EAST" in cell:
+                            row_str += "→ "  # Jump east
+                        elif "JUMP_WEST" in cell:
+                            row_str += "← "  # Jump west
+                        elif "JUMP_NORTH" in cell:
+                            row_str += "↑ "  # Jump north
+                        elif "JUMP_SOUTH" in cell:
+                            row_str += "↓ "  # Jump south
+                        elif "JUMP_NORTHEAST" in cell:
+                            row_str += "↗ "  # Jump northeast
+                        elif "JUMP_NORTHWEST" in cell:
+                            row_str += "↖ "  # Jump northwest
+                        elif "JUMP_SOUTHEAST" in cell:
+                            row_str += "↘ "  # Jump southeast
+                        elif "JUMP_SOUTHWEST" in cell:
+                            row_str += "↙ "  # Jump southwest
+                        else:
+                            row_str += "J "  # Generic jump
                     else:
                         # For other terrain types, use first letter
                         row_str += f"{cell[0] if cell else '?'} "
             context_parts.append(row_str.rstrip())
         
-        context_parts.append("\nLegend: P=Player, .=Normal path, #=Blocked, ~=Tall grass, W=Water, J=Jump ledge")
+        context_parts.append("\nLegend: ↑↓←→=Player (facing direction), .=Normal path, #=Blocked, ~=Tall grass, W=Water, J=Jump ledge, →←↑↓↗↖↘↙=Jump ledge directions")
         
         # Simple terrain summary (just key info)
         terrain_types = set()
@@ -267,28 +424,28 @@ def _format_map_info(map_info, include_debug_info=False):
                 elif "WATER" in terrain:
                     special_terrain.append("Water (may need Surf)")
                 elif "JUMP" in terrain:
-                    special_terrain.append("Jump ledges")
+                    # Show specific jump directions
+                    if "JUMP_EAST" in terrain:
+                        special_terrain.append("Jump ledge (→ East)")
+                    elif "JUMP_WEST" in terrain:
+                        special_terrain.append("Jump ledge (← West)")
+                    elif "JUMP_NORTH" in terrain:
+                        special_terrain.append("Jump ledge (↑ North)")
+                    elif "JUMP_SOUTH" in terrain:
+                        special_terrain.append("Jump ledge (↓ South)")
+                    elif "JUMP_NORTHEAST" in terrain:
+                        special_terrain.append("Jump ledge (↗ Northeast)")
+                    elif "JUMP_NORTHWEST" in terrain:
+                        special_terrain.append("Jump ledge (↖ Northwest)")
+                    elif "JUMP_SOUTHEAST" in terrain:
+                        special_terrain.append("Jump ledge (↘ Southeast)")
+                    elif "JUMP_SOUTHWEST" in terrain:
+                        special_terrain.append("Jump ledge (↙ Southwest)")
+                    else:
+                        special_terrain.append("Jump ledges")
                 else:
                     special_terrain.append(terrain)
-            
-            if special_terrain:
-                context_parts.append(f"Special terrain: {', '.join(special_terrain)}")
-    
-    # Current tile details (simplified)
-    if 'metatile_info' in map_info and map_info['metatile_info']:
-        tile_info = map_info['metatile_info']
-        if tile_info and len(tile_info) > 0:
-            center_y = len(tile_info) // 2
-            center_x = len(tile_info[center_y]) // 2 if len(tile_info[center_y]) > 0 else 0
-            
-            if center_y < len(tile_info) and center_x < len(tile_info[center_y]):
-                center_tile = tile_info[center_y][center_x]
-                context_parts.append(f"\nCurrent Tile: {center_tile.get('behavior', 'Unknown')} - {'Passable' if center_tile.get('passable') else 'Blocked'}")
-                if center_tile.get('encounter_possible'):
-                    context_parts.append("Wild encounters possible here")
-                if center_tile.get('surfable'):
-                    context_parts.append("Can use Surf here")
-    
+            context_parts.append("Special terrain: " + ", ".join(special_terrain))
     return context_parts
 
 def _format_game_state(game_data):

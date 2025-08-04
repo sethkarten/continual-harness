@@ -27,6 +27,7 @@ class MemoryAddresses:
     SAVESTATE_OBJECT_POINTER = 0x03005d8c
     SAVESTATE_PLAYER_X_OFFSET = 0x00
     SAVESTATE_PLAYER_Y_OFFSET = 0x02
+    SAVESTATE_PLAYER_FACING_OFFSET = 0x04  # Player facing direction (0=South, 1=North, 2=West, 3=East)
     SAVESTATE_MONEY_OFFSET = 0x490
     
     # Party Pokemon addresses (from emerald_utils.py)
@@ -550,6 +551,30 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to read coordinates: {e}")
             return (0, 0)
 
+    def read_player_facing(self) -> str:
+        """Read player facing direction"""
+        try:
+            # Get the base address of the savestate object structure
+            base_address = self._read_u32(self.addresses.SAVESTATE_OBJECT_POINTER)
+            
+            if base_address == 0:
+                logger.warning("Could not read savestate object pointer")
+                return "South"
+            
+            # Read facing direction from the savestate object
+            facing_value = self._read_u8(base_address + self.addresses.SAVESTATE_PLAYER_FACING_OFFSET)
+            
+            # Convert to direction string (0=South, 1=North, 2=West, 3=East)
+            directions = ["South", "North", "West", "East"]
+            if 0 <= facing_value < len(directions):
+                return directions[facing_value]
+            else:
+                logger.warning(f"Invalid facing direction value: {facing_value}")
+                return "South"
+        except Exception as e:
+            logger.warning(f"Failed to read player facing direction: {e}")
+            return "South"
+
     def read_location(self) -> str:
         """Read current location"""
         try:
@@ -930,6 +955,11 @@ class PokemonEmeraldReader:
             player_name = self.read_player_name()
             if player_name:
                 state["player"]["name"] = player_name
+            
+            # Player facing direction
+            facing = self.read_player_facing()
+            if facing:
+                state["player"]["facing"] = facing
             
             # Game information
             state["game"].update({
