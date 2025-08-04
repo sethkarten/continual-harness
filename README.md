@@ -70,8 +70,11 @@ emerald/
 │   └── action.py            # Action module + prompts
 ├── utils/
 │   ├── __init__.py
-│   ├── vlm.py               # VLM backend implementations
-│   └── helpers.py           # Helper functions
+│   ├── vlm.py               # VLM backend implementations with robust error handling
+│   ├── helpers.py           # Helper functions
+│   ├── state_formatter.py   # Game state formatting utilities
+│   ├── anticheat.py         # Anti-cheat tracking and verification
+│   └── llm_logger.py        # Comprehensive LLM interaction logging
 ├── pokemon_env/             # Pokémon environment wrapper
 └── Emerald-GBAdvance/       # Place your Pokémon Emerald ROM here
 ```
@@ -275,6 +278,7 @@ Options:
   --device TEXT            Device for local models (auto/cpu/cuda, default: "auto")
   --load-in-4bit          Use 4-bit quantization for local models
   --debug-state           Enable detailed state debugging
+  --action-delay FLOAT     Delay after actions in seconds (default: 0.3)
 ```
 
 ## Customizing Agent Behavior (Prompt Editing Guide)
@@ -516,9 +520,11 @@ Your submission must include **all three** of the following components:
 #### 2. **Action & State Logs**
 - Detailed logs automatically created by this starter kit during your agent's run
 - These logs are generated when you run `python agent.py` and include:
-  - All agent actions and decisions
-  - Game state information at each step
-  - Timestamps and performance metrics
+  - All agent actions and decisions with timestamps
+  - Game state information at each step with cryptographic hashes
+  - Performance metrics and decision timing analysis
+  - Anti-cheat verification data for submission validation
+  - LLM interaction logs for debugging and transparency
 
 #### 3. **Video Evidence**
 - YouTube link to a screen recording showing your complete speedrun
