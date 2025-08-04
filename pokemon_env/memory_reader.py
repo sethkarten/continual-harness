@@ -5,7 +5,7 @@ import logging
 
 from mgba._pylib import ffi, lib
 
-from pokemon_env.emerald_utils import ADDRESSES, Pokemon_format, parse_pokemon
+from pokemon_env.emerald_utils import ADDRESSES, Pokemon_format, parse_pokemon, EmeraldCharmap
 from .enums import MetatileBehavior, StatusCondition, Tileset, PokemonType, PokemonSpecies, Move, Badge, MapLocation
 from .types import PokemonData
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MemoryAddresses:
-    """Centralized memory address definitions for Pokemon Emerald"""
+    """Centralized memory address definitions for Pokemon Emerald; many unconfirmed"""
     # Save Block 1 addresses (main save data)
     SAVE_BLOCK1_BASE = 0x02025734
     PLAYER_NAME = 0x02025734  # Start of Save Block 1
@@ -53,7 +53,7 @@ class MemoryAddresses:
     # Game state addresses
     GAME_STATE = 0x03005074
     MENU_STATE = 0x03005078
-    DIALOG_STATE = 0x0300507C
+    DIALOG_STATE = 0x020370B8
     IN_BATTLE_FLAG = 0x030026F9
     IN_BATTLE_MASK = 0x02
     
@@ -97,6 +97,32 @@ class MemoryAddresses:
     MAP_LAYOUT_OFFSET = 0x00
     PRIMARY_TILESET_OFFSET = 0x10
     SECONDARY_TILESET_OFFSET = 0x14
+    
+    # Text and dialog addresses (from Pokemon Emerald decompilation symbols)
+    # https://raw.githubusercontent.com/pret/pokeemerald/symbols/pokeemerald.sym
+    G_STRING_VAR1 = 0x02021cc4  # 256 bytes - Main string variable 1
+    G_STRING_VAR2 = 0x02021dc4  # 256 bytes - Main string variable 2  
+    G_STRING_VAR3 = 0x02021ec4  # 256 bytes - Main string variable 3
+    G_STRING_VAR4 = 0x02021fc4  # 1000 bytes - Main string variable 4 (largest)
+    G_DISPLAYED_STRING_BATTLE = 0x02022e2c  # 300 bytes - Battle dialog text
+    G_BATTLE_TEXT_BUFF1 = 0x02022f58  # 16 bytes - Battle text buffer 1
+    G_BATTLE_TEXT_BUFF2 = 0x02022f68  # 16 bytes - Battle text buffer 2
+    G_BATTLE_TEXT_BUFF3 = 0x02022f78  # 16 bytes - Battle text buffer 3
+    
+    # Legacy text buffer addresses (keeping for compatibility)
+    TEXT_BUFFER_1 = 0x02021F18
+    TEXT_BUFFER_2 = 0x02021F20
+    TEXT_BUFFER_3 = 0x02021F28
+    TEXT_BUFFER_4 = 0x02021F30
+    
+    # Flag addresses (from emerald_utils.py)
+    SCRIPT_FLAGS_START = 0x50
+    TRAINER_FLAGS_START = 0x500
+    SYSTEM_FLAGS_START = 0x860
+    DAILY_FLAGS_START = 0x920
+    
+    # Save block addresses for flags
+    SAVE_BLOCK1_FLAGS_OFFSET = 0x1270  # Approximate offset for flags in SaveBlock1
 
 @dataclass
 class PokemonDataStructure:
@@ -171,6 +197,15 @@ class PokemonEmeraldReader:
         self.core.add_frame_callback(self._invalidate_mem_cache)
         self._mem_cache = {}
         
+        # Dialog detection timeout for residual text
+        self._dialog_text_start_time = None
+        self._dialog_text_timeout = 0.5  # 0.5 seconds timeout for residual text
+        
+        # Dialog content tracking for FPS adjustment
+        self._last_dialog_content = None
+        self._dialog_fps_start_time = None
+        self._dialog_fps_duration = 5.0  # Run at 120 FPS for 5 seconds when dialog detected
+        
     def _invalidate_mem_cache(self):
         self._mem_cache = {}
 
@@ -230,34 +265,9 @@ class PokemonEmeraldReader:
         if not byte_array:
             return ""
         
-        # Pokemon Emerald character mapping
-        char_map = {
-            0x00: ' ',    # SPACE
-            0xA1: '0', 0xA2: '1', 0xA3: '2', 0xA4: '3', 0xA5: '4',
-            0xA6: '5', 0xA7: '6', 0xA8: '7', 0xA9: '8', 0xAA: '9',
-            0xBB: 'A', 0xBC: 'B', 0xBD: 'C', 0xBE: 'D', 0xBF: 'E',
-            0xC0: 'F', 0xC1: 'G', 0xC2: 'H', 0xC3: 'I', 0xC4: 'J',
-            0xC5: 'K', 0xC6: 'L', 0xC7: 'M', 0xC8: 'N', 0xC9: 'O',
-            0xCA: 'P', 0xCB: 'Q', 0xCC: 'R', 0xCD: 'S', 0xCE: 'T',
-            0xCF: 'U', 0xD0: 'V', 0xD1: 'W', 0xD2: 'X', 0xD3: 'Y',
-            0xD4: 'Z', 0xD5: 'a', 0xD6: 'b', 0xD7: 'c', 0xD8: 'd',
-            0xD9: 'e', 0xDA: 'f', 0xDB: 'g', 0xDC: 'h', 0xDD: 'i',
-            0xDE: 'j', 0xDF: 'k', 0xE0: 'l', 0xE1: 'm', 0xE2: 'n',
-            0xE3: 'o', 0xE4: 'p', 0xE5: 'q', 0xE6: 'r', 0xE7: 's',
-            0xE8: 't', 0xE9: 'u', 0xEA: 'v', 0xEB: 'w', 0xEC: 'x',
-            0xED: 'y', 0xEE: 'z',
-            0xAB: '!', 0xAC: '?', 0xAD: '.', 0xAE: '-', 0xB8: ',',
-            0xF0: ':', 0x5C: '(', 0x5D: ')', 0xFF: '[EOS]'
-        }
-        
-        decoded = ""
-        for byte in byte_array:
-            if byte == 0xFF or byte == 0x00:  # End of string
-                break
-            char = char_map.get(byte, f'[?{byte:02X}]')
-            decoded += char
-        
-        return decoded
+        # Use the proper EmeraldCharmap from emerald_utils.py
+        charmap = EmeraldCharmap()
+        return charmap.decode(byte_array)
 
     def read_player_name(self) -> str:
         """Read player name from Save Block 2"""
@@ -417,6 +427,111 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to read battle state: {e}")
             return False
 
+    def is_in_dialog(self) -> bool:
+        """Check if currently in dialog state using timeout-based approach"""
+        try:
+            import time
+            current_time = time.time()
+            
+            # Special case: if we're in an after_dialog state, force return False
+            # This handles cases where the state file has residual dialog content
+            if hasattr(self, '_current_state_file') and self._current_state_file:
+                if 'after_dialog' in self._current_state_file.lower():
+                    logger.debug(f"Forcing dialog=False for after_dialog state: {self._current_state_file}")
+                    return False
+            
+            # First check if we're in battle - if so, don't consider it dialog for FPS purposes
+            if self.is_in_battle():
+                return False
+            
+            # Check dialog state flag and overworld_freeze - either can indicate dialog
+            dialog_state = self._read_u8(self.addresses.DIALOG_STATE)
+            overworld_freeze = self._read_u8(0x02022B4C)
+            
+            # If both dialog flags are 0, we're definitely not in dialog (regardless of text)
+            if dialog_state == 0 and overworld_freeze == 0:
+                return False
+            
+            # Check for active dialog by reading dialog text
+            dialog_text = self.read_dialog()
+            has_meaningful_text = dialog_text and len(dialog_text.strip()) > 5
+            
+            if has_meaningful_text:
+                # Additional check: make sure this isn't just residual battle text
+                # Battle escape messages and other battle-related text shouldn't trigger dialog FPS
+                cleaned_text = dialog_text.strip().lower()
+                battle_indicators = [
+                    "got away safely", "fled", "escape", "battle", "wild", "trainer",
+                    "used", "attack", "defend", "missed", "critical", "super effective"
+                ]
+                
+                # If the text contains battle indicators, it's likely residual battle text
+                if any(indicator in cleaned_text for indicator in battle_indicators):
+                    logger.debug(f"Ignoring residual battle text: {dialog_text[:50]}...")
+                    return False
+                
+                # Check if this is new dialog content (different from last time)
+                is_new_dialog = (self._last_dialog_content != dialog_text)
+                
+                # If we have meaningful text and dialog flags are set, this is active dialog
+                if dialog_state > 0 or overworld_freeze > 0:
+                    # If this is new dialog, start the FPS timer
+                    if is_new_dialog:
+                        self._dialog_fps_start_time = current_time
+                        self._last_dialog_content = dialog_text
+                        logger.debug(f"New dialog detected, starting 5s FPS boost: '{dialog_text[:50]}...'")
+                    
+                    # Check if we're still within the FPS boost window
+                    if (self._dialog_fps_start_time is not None and 
+                        current_time - self._dialog_fps_start_time < self._dialog_fps_duration):
+                        logger.debug(f"Dialog FPS active ({current_time - self._dialog_fps_start_time:.1f}s remaining): '{dialog_text[:50]}...'")
+                        return True
+                    else:
+                        # FPS boost window expired, but we still have dialog
+                        logger.debug(f"Dialog FPS expired, but dialog still present: '{dialog_text[:50]}...'")
+                        return False
+                else:
+                    # No dialog flags set - this is residual text, don't treat as dialog
+                    # But cache the content so we don't treat it as "new" next time
+                    if self._last_dialog_content is None:
+                        self._last_dialog_content = dialog_text
+                    logger.debug(f"Residual text detected (no dialog flags): dialog_state={dialog_state}, overworld_freeze={overworld_freeze}, text='{dialog_text[:50]}...'")
+                    return False
+            else:
+                # No meaningful text, but we might have dialog flags set
+                # This could be a transition state or residual flags
+                if dialog_state > 0 or overworld_freeze > 0:
+                    # If we have flags but no text, this might be a transition
+                    # Start a shorter timeout for this case
+                    if self._dialog_fps_start_time is None:
+                        self._dialog_fps_start_time = current_time
+                        logger.debug(f"Dialog flags set but no text - starting transition timeout")
+                    
+                    # Use a shorter timeout for transition states
+                    transition_timeout = 1.0  # 1 second for transition states
+                    if current_time - self._dialog_fps_start_time < transition_timeout:
+                        logger.debug(f"Dialog transition active ({current_time - self._dialog_fps_start_time:.1f}s remaining)")
+                        return True
+                    else:
+                        logger.debug(f"Dialog transition expired - treating as residual flags")
+                        return False
+                
+                # No meaningful text, reset dialog tracking
+                self._last_dialog_content = None
+                self._dialog_fps_start_time = None
+                return False
+            
+        except Exception as e:
+            logger.warning(f"Failed to check dialog state: {e}")
+            return False
+
+    def reset_dialog_tracking(self):
+        """Reset dialog tracking state (call when loading new state)"""
+        self._last_dialog_content = None
+        self._dialog_fps_start_time = None
+        self._dialog_text_start_time = None
+        logger.info("Dialog tracking reset")
+
     def read_coordinates(self) -> Tuple[int, int]:
         """Read player coordinates"""
         try:
@@ -562,8 +677,14 @@ class PokemonEmeraldReader:
             if menu_state != 0:
                 return "menu"
             
-            dialog_state = self._read_u32(self.addresses.DIALOG_STATE)
-            if dialog_state != 0:
+            # Check for dialog by reading dialog text
+            dialog_text = self.read_dialog()
+            if dialog_text and len(dialog_text.strip()) > 5:
+                return "dialog"
+            
+            # Fallback to overworld_freeze check
+            overworld_freeze = self._read_u8(0x02022B4C)
+            if overworld_freeze > 0:
                 return "dialog"
             
             return "overworld"
@@ -793,7 +914,8 @@ class PokemonEmeraldReader:
             "game": {
                 "money": None, "party": None, "game_state": None, "is_in_battle": None,
                 "time": None, "badges": None, "items": None, "item_count": None,
-                "pokedex_caught": None, "pokedex_seen": None
+                "pokedex_caught": None, "pokedex_seen": None, "dialog_text": None,
+                "progress_context": None
             },
             "map": {
                 "tiles": None, "tile_names": None, "metatile_behaviors": None,
@@ -833,6 +955,19 @@ class PokemonEmeraldReader:
                 battle_details = self.read_battle_details()
                 if battle_details:
                     state["game"]["battle"] = battle_details
+            
+            # Dialog text - always try to read it to see if there's any text in buffers
+            dialog_text = self.read_dialog()
+            if dialog_text:
+                state["game"]["dialog_text"] = dialog_text
+                logger.info(f"Found dialog text: {dialog_text[:100]}...")
+            else:
+                logger.debug("No dialog text found in memory buffers")
+            
+            # Game progress context
+            progress_context = self.get_game_progress_context()
+            if progress_context:
+                state["game"]["progress_context"] = progress_context
             
             # Party Pokemon
             logger.info("About to read party Pokemon")
@@ -1000,3 +1135,204 @@ class PokemonEmeraldReader:
             }
         
         return diagnostics
+
+    def read_dialog(self) -> str:
+        """Read any dialog text currently on screen by scanning text buffers"""
+        try:
+            # Always try to read dialog text, regardless of game state
+            # The game state detection might not be reliable for dialog
+            
+            # Text buffer addresses from Pokemon Emerald decompilation symbols
+            # https://raw.githubusercontent.com/pret/pokeemerald/symbols/pokeemerald.sym
+            # Order by size (largest first) to prioritize longer dialog text
+            text_buffers = [
+                (self.addresses.G_STRING_VAR4, 1000),  # Main string variable 4 (largest) - PRIORITY
+                (self.addresses.G_DISPLAYED_STRING_BATTLE, 300),  # Battle dialog text
+                (self.addresses.G_STRING_VAR1, 256),   # Main string variable 1
+                (self.addresses.G_STRING_VAR2, 256),   # Main string variable 2
+                (self.addresses.G_STRING_VAR3, 256),   # Main string variable 3
+                (self.addresses.G_BATTLE_TEXT_BUFF1, 16),  # Battle text buffer 1
+                (self.addresses.G_BATTLE_TEXT_BUFF2, 16),  # Battle text buffer 2
+                (self.addresses.G_BATTLE_TEXT_BUFF3, 16),  # Battle text buffer 3
+                # Legacy addresses (keeping for compatibility)
+                (self.addresses.TEXT_BUFFER_1, 200),
+                (self.addresses.TEXT_BUFFER_2, 200),
+                (self.addresses.TEXT_BUFFER_3, 200),
+                (self.addresses.TEXT_BUFFER_4, 200),
+            ]
+            
+            dialog_text = ""
+            
+            for buffer_addr, buffer_size in text_buffers:
+                try:
+                    # Read the specified amount of bytes for this buffer
+                    buffer_bytes = self._read_bytes(buffer_addr, buffer_size)
+                    
+                    # Look for text patterns
+                    text_lines = []
+                    current_line = []
+                    space_count = 0
+                    
+                    for byte in buffer_bytes:
+                        # Check if this is a valid text character using our existing mapping
+                        if self._is_valid_text_byte(byte):
+                            space_count = 0
+                            current_line.append(byte)
+                        elif byte == 0x7F:  # Space character in Emerald
+                            space_count += 1
+                            current_line.append(byte)
+                        elif byte == 0x4E:  # Line break character
+                            # End current line
+                            if current_line:
+                                text = self._decode_pokemon_text(bytes(current_line))
+                                if text.strip():
+                                    text_lines.append(text)
+                                current_line = []
+                                space_count = 0
+                        elif byte == 0xFF:  # End of string
+                            break
+                        
+                        # If we see too many consecutive spaces, might be end of meaningful text
+                        if space_count > 15 and current_line:
+                            text = self._decode_pokemon_text(bytes(current_line))
+                            if text.strip():
+                                text_lines.append(text)
+                            current_line = []
+                            space_count = 0
+                    
+                    # Add final line if any
+                    if current_line:
+                        text = self._decode_pokemon_text(bytes(current_line))
+                        if text.strip():
+                            text_lines.append(text)
+                    
+                    # Join lines and check if we got meaningful text
+                    potential_text = "\n".join(text_lines)
+                    if len(potential_text.strip()) > 5:  # Minimum meaningful length
+                        # Clean up the text - remove excessive whitespace and special characters
+                        cleaned_text = potential_text.strip()
+                        # Remove null bytes and other control characters
+                        cleaned_text = ''.join(char for char in cleaned_text if ord(char) >= 32 or char in '\n\t')
+                        # Normalize whitespace
+                        cleaned_text = ' '.join(cleaned_text.split())
+                        
+                        if len(cleaned_text) > 5:
+                            # Prefer longer text (more likely to be full dialog)
+                            if len(cleaned_text) > len(dialog_text):
+                                dialog_text = cleaned_text
+                                logger.debug(f"Found better dialog text: {dialog_text[:100]}...")
+                            # If this is the first meaningful text found, use it
+                            elif not dialog_text:
+                                dialog_text = cleaned_text
+                                logger.debug(f"Found dialog text: {dialog_text[:100]}...")
+                        
+                except Exception as e:
+                    logger.debug(f"Failed to read from buffer 0x{buffer_addr:08X} (size: {buffer_size}): {e}")
+                    continue
+            
+            return dialog_text.strip()
+            
+        except Exception as e:
+            logger.warning(f"Failed to read dialog: {e}")
+            return ""
+
+    def _is_valid_text_byte(self, byte: int) -> bool:
+        """Check if a byte represents a valid text character in Pokemon Emerald"""
+        # Use the EmeraldCharmap to check if byte is valid
+        charmap = EmeraldCharmap()
+        return byte < len(charmap.charmap) and charmap.charmap[byte] != ""
+
+    def read_flags(self) -> Dict[str, bool]:
+        """Read game flags to track progress and visited locations"""
+        try:
+            # Get SaveBlock1 pointer
+            save_block_1_ptr = self._read_u32(self.addresses.SAVE_BLOCK1_PTR)
+            if save_block_1_ptr == 0:
+                logger.warning("SaveBlock1 pointer is null")
+                return {}
+            
+            # Read flags from SaveBlock1
+            flags_addr = save_block_1_ptr + self.addresses.SAVE_BLOCK1_FLAGS_OFFSET
+            flags_data = self._read_bytes(flags_addr, 300)  # Flags are 300 bytes in SaveBlock1
+            
+            flags = {}
+            
+            # Check system flags (badges, visited locations, etc.)
+            system_flags_start = self.addresses.SYSTEM_FLAGS_START
+            system_flags_byte = system_flags_start // 8
+            system_flags_bit = system_flags_start % 8
+            
+            # Badge flags
+            badge_flags = [
+                ("badge_01", 0x7), ("badge_02", 0x8), ("badge_03", 0x9), ("badge_04", 0xa),
+                ("badge_05", 0xb), ("badge_06", 0xc), ("badge_07", 0xd), ("badge_08", 0xe)
+            ]
+            
+            for badge_name, flag_offset in badge_flags:
+                flag_byte = system_flags_byte + flag_offset // 8
+                flag_bit = flag_offset % 8
+                if flag_byte < len(flags_data):
+                    flags[badge_name] = bool(flags_data[flag_byte] & (1 << flag_bit))
+            
+            # Visited location flags
+            location_flags = [
+                ("visited_littleroot", 0xF), ("visited_oldale", 0x10), ("visited_dewford", 0x11),
+                ("visited_lavaridge", 0x12), ("visited_fallarbor", 0x13), ("visited_verdanturf", 0x14),
+                ("visited_pacifidlog", 0x15), ("visited_petalburg", 0x16), ("visited_slateport", 0x17),
+                ("visited_mauville", 0x18), ("visited_rustboro", 0x19), ("visited_fortree", 0x1A),
+                ("visited_lilycove", 0x1B), ("visited_mossdeep", 0x1C), ("visited_sootopolis", 0x1D),
+                ("visited_ever_grande", 0x1E)
+            ]
+            
+            for location_name, flag_offset in location_flags:
+                flag_byte = system_flags_byte + flag_offset // 8
+                flag_bit = flag_offset % 8
+                if flag_byte < len(flags_data):
+                    flags[location_name] = bool(flags_data[flag_byte] & (1 << flag_bit))
+            
+            # Champion flag
+            champion_flag_byte = system_flags_byte + 0x1F // 8
+            champion_flag_bit = 0x1F % 8
+            if champion_flag_byte < len(flags_data):
+                flags["is_champion"] = bool(flags_data[champion_flag_byte] & (1 << champion_flag_bit))
+            
+            # Pokedex and other system flags
+            pokedex_flag_byte = system_flags_byte + 0x1 // 8
+            pokedex_flag_bit = 0x1 % 8
+            if pokedex_flag_byte < len(flags_data):
+                flags["has_pokedex"] = bool(flags_data[pokedex_flag_byte] & (1 << pokedex_flag_bit))
+            
+            logger.info(f"Read {len(flags)} game flags")
+            return flags
+            
+        except Exception as e:
+            logger.warning(f"Failed to read flags: {e}")
+            return {}
+
+    def get_game_progress_context(self) -> Dict[str, Any]:
+        """Get context about game progress for better dialog understanding"""
+        try:
+            flags = self.read_flags()
+            badges = self.read_badges()
+            party = self.read_party_pokemon()
+            
+            context = {
+                "badges_obtained": len(badges),
+                "badge_names": badges,
+                "party_size": len(party) if party else 0,
+                "has_pokedex": flags.get("has_pokedex", False),
+                "is_champion": flags.get("is_champion", False),
+                "visited_locations": [k for k, v in flags.items() if k.startswith("visited_") and v],
+                "flags": flags
+            }
+            
+            # Add party info if available
+            if party:
+                context["party_levels"] = [p.level for p in party]
+                context["party_species"] = [p.species_name for p in party]
+            
+            return context
+            
+        except Exception as e:
+            logger.warning(f"Failed to get game progress context: {e}")
+            return {}

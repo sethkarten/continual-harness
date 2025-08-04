@@ -160,6 +160,11 @@ class EmeraldEmulator:
         # Milestone tracker for progress tracking
         self.milestone_tracker = MilestoneTracker()
 
+        # Dialog state tracking for FPS adjustment
+        self._cached_dialog_state = False
+        self._last_dialog_check_time = 0
+        self._dialog_check_interval = 0.05  # Check dialog state every 50ms (more responsive)
+
         # Define key mapping for mgba
         self.KEY_MAP = {
             "a": lib.GBA_KEY_A,
@@ -253,6 +258,28 @@ class EmeraldEmulator:
             for _ in range(frames):
                 self.core.run_frame()
 
+    def get_current_fps(self, base_fps: int = 30) -> int:
+        """Get current FPS - quadruples during dialog for faster text progression"""
+        # Use cached dialog state for performance
+        return base_fps * 4 if self._cached_dialog_state else base_fps
+
+    def _update_dialog_state_cache(self):
+        """Update cached dialog state (called periodically for performance)"""
+        import time
+        current_time = time.time()
+        
+        # Only check dialog state periodically to avoid performance issues
+        if current_time - self._last_dialog_check_time >= self._dialog_check_interval:
+            if self.memory_reader:
+                new_dialog_state = self.memory_reader.is_in_dialog()
+                if new_dialog_state != self._cached_dialog_state:
+                    self._cached_dialog_state = new_dialog_state
+                    if new_dialog_state:
+                        logger.debug("🎯 Dialog detected - switching to 4x FPS")
+                    else:
+                        logger.debug("✅ Dialog ended - reverting to normal FPS")
+            self._last_dialog_check_time = current_time
+
     def press_key(self, key: str, frames: int = 2):
         """Press a key for specified number of frames"""
         if key not in self.KEY_MAP:
@@ -299,6 +326,9 @@ class EmeraldEmulator:
             if button.lower() in self.KEY_MAP:
                 key_code = self.KEY_MAP[button.lower()]
                 self.core.clear_keys(key_code)
+        
+        # Update dialog state cache for FPS adjustment
+        self._update_dialog_state_cache()
         
         # Clear state cache after action to ensure fresh data
         if hasattr(self, '_cached_state'):
@@ -374,6 +404,15 @@ class EmeraldEmulator:
                     state_bytes = bytes(state_bytes)
                 self.core.load_raw_state(state_bytes)
                 logger.info("State loaded.")
+                
+                # Reset dialog tracking when loading new state
+                if self.memory_reader:
+                    self.memory_reader.reset_dialog_tracking()
+                    # Set the current state file for special dialog detection
+                    if path:
+                        self.memory_reader._current_state_file = path
+                    else:
+                        self.memory_reader._current_state_file = None
                 
                 # Load corresponding milestones for this state
                 if path:

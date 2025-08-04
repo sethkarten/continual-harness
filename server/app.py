@@ -41,7 +41,7 @@ env = None
 running = True
 step_count = 0
 current_obs = None
-fps = 60
+fps = 30  # Changed from 60 to 30 for 4x speedup during dialog
 
 # Pygame display
 screen_width = 480  # 240 * 2 (upscaled)
@@ -310,7 +310,9 @@ def game_loop(manual_mode=False):
         with step_lock:
             step_count += 1
         
-        clock.tick(fps)
+        # Use dynamic FPS - 2x speed during dialog
+        current_fps = env.get_current_fps(fps) if env else fps
+        clock.tick(current_fps)
 
 def init_pygame():
     """Initialize pygame"""
@@ -347,10 +349,19 @@ async def get_status():
     """Get server status"""
     with step_lock:
         current_step = step_count
+    
+    # Get current FPS (may be 4x during dialog)
+    current_fps = env.get_current_fps(fps) if env else fps
+    # Use cached dialog state for consistency with FPS calculation
+    is_dialog = env._cached_dialog_state if env else False
+    
     return {
         "status": "running",
         "step_count": current_step,
-        "fps": fps
+        "base_fps": fps,
+        "current_fps": current_fps,
+        "is_dialog": is_dialog,
+        "fps_multiplier": 4 if is_dialog else 1
     }
 
 @app.get("/screenshot")
@@ -578,6 +589,42 @@ async def debug_memory_comprehensive():
         
     except Exception as e:
         logger.error(f"Error running comprehensive memory test: {e}")
+        return {"error": str(e)}
+
+@app.get("/debug/memory/dump")
+async def debug_memory_dump(start: int = 0x02000000, length: int = 0x1000):
+    """Dump raw memory from the emulator"""
+    if env is None:
+        raise HTTPException(status_code=400, detail="Emulator not initialized")
+    
+    try:
+        if not env.memory_reader:
+            return {"error": "Memory reader not initialized"}
+        
+        # Read raw memory bytes
+        memory_bytes = env.memory_reader._read_bytes(start, length)
+        
+        # Convert to hex string for easy viewing
+        hex_data = memory_bytes.hex()
+        
+        # Also try to decode as text using Pokemon Emerald character mapping
+        try:
+            from pokemon_env.emerald_utils import EmeraldCharmap
+            charmap = EmeraldCharmap()
+            decoded_text = charmap.decode(memory_bytes)
+        except:
+            decoded_text = "Could not decode as text"
+        
+        return {
+            "start_address": f"0x{start:08X}",
+            "length": length,
+            "hex_data": hex_data,
+            "decoded_text": decoded_text,
+            "raw_bytes": [b for b in memory_bytes[:100]]  # First 100 bytes as numbers
+        }
+        
+    except Exception as e:
+        logger.error(f"Error dumping memory: {e}")
         return {"error": str(e)}
 
 @app.post("/save_state")
