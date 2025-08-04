@@ -1,0 +1,166 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "id": "GAME_RUNNING",
+      "name": "GAME_RUNNING",
+      "category": "basic",
+      "completed": true,
+      "timestamp": 1722787200.0,
+      "description": "Game is running and emulator is active"
+    },
+    "HAS_PARTY": {
+      "id": "HAS_PARTY",
+      "name": "HAS_PARTY",
+      "category": "basic",
+      "completed": true,
+      "timestamp": 1722787200.0,
+      "description": "Player has at least one Pokemon in party"
+    },
+    "STARTER_CHOSEN": {
+      "id": "STARTER_CHOSEN",
+      "name": "STARTER_CHOSEN",
+      "category": "story",
+      "completed": true,
+      "timestamp": 1722787200.0,
+      "description": "Player has chosen their starter Pokemon"
+    },
+    "TORCHIC_OBTAINED": {
+      "id": "TORCHIC_OBTAINED",
+      "name": "TORCHIC_OBTAINED",
+      "category": "pokemon",
+      "completed": true,
+      "timestamp": 1722787200.0,
+      "description": "Player has obtained Torchic as their starter"
+    },
+    "ROUTE_101_VISITED": {
+      "id": "ROUTE_101_VISITED",
+      "name": "ROUTE_101_VISITED",
+      "category": "location",
+      "completed": true,
+      "timestamp": 1722787200.0,
+      "description": "Player has visited Route 101"
+    },
+    "LITTLEROOT_TOWN": {
+      "id": "LITTLEROOT_TOWN",
+      "name": "LITTLEROOT_TOWN",
+      "category": "location",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has visited Littleroot Town"
+    },
+    "OLDALE_TOWN": {
+      "id": "OLDALE_TOWN",
+      "name": "OLDALE_TOWN",
+      "category": "location",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has visited Oldale Town"
+    },
+    "POKEDEX_RECEIVED": {
+      "id": "POKEDEX_RECEIVED",
+      "name": "POKEDEX_RECEIVED",
+      "category": "story",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has received the Pokedex from Professor Birch"
+    },
+    "FIRST_WILD_ENCOUNTER": {
+      "id": "FIRST_WILD_ENCOUNTER",
+      "name": "FIRST_WILD_ENCOUNTER",
+      "category": "battle",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has encountered their first wild Pokemon"
+    },
+    "STONE_BADGE": {
+      "id": "STONE_BADGE",
+      "name": "STONE_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Stone Badge from Rustboro Gym"
+    },
+    "KNUCKLE_BADGE": {
+      "id": "KNUCKLE_BADGE",
+      "name": "KNUCKLE_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Knuckle Badge from Dewford Gym"
+    },
+    "DYNAMO_BADGE": {
+      "id": "DYNAMO_BADGE",
+      "name": "DYNAMO_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Dynamo Badge from Mauville Gym"
+    },
+    "HEAT_BADGE": {
+      "id": "HEAT_BADGE",
+      "name": "HEAT_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Heat Badge from Lavaridge Gym"
+    },
+    "BALANCE_BADGE": {
+      "id": "BALANCE_BADGE",
+      "name": "BALANCE_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Balance Badge from Petalburg Gym"
+    },
+    "FEATHER_BADGE": {
+      "id": "FEATHER_BADGE",
+      "name": "FEATHER_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Feather Badge from Fortree Gym"
+    },
+    "MIND_BADGE": {
+      "id": "MIND_BADGE",
+      "name": "MIND_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Mind Badge from Mossdeep Gym"
+    },
+    "RAIN_BADGE": {
+      "id": "RAIN_BADGE",
+      "name": "RAIN_BADGE",
+      "category": "badge",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has obtained the Rain Badge from Sootopolis Gym"
+    },
+    "ELITE_FOUR_DEFEATED": {
+      "id": "ELITE_FOUR_DEFEATED",
+      "name": "ELITE_FOUR_DEFEATED",
+      "category": "story",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has defeated the Elite Four"
+    },
+    "CHAMPION_DEFEATED": {
+      "id": "CHAMPION_DEFEATED",
+      "name": "CHAMPION_DEFEATED",
+      "category": "story",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has become the Pokemon League Champion"
+    },
+    "POKEMON_CAUGHT": {
+      "id": "POKEMON_CAUGHT",
+      "name": "POKEMON_CAUGHT",
+      "category": "pokemon",
+      "completed": false,
+      "timestamp": null,
+      "description": "Player has caught their first Pokemon"
+    }
+  },
+  "last_updated": "2025-08-04T14:58:00Z",
+  "version": "1.0"
+} 

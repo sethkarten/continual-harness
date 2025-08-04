@@ -99,15 +99,32 @@ class MilestoneTracker:
         """Load milestones from file, optionally with a specific state filename"""
         if state_filename:
             # If a state filename is provided, try to load milestones from a corresponding file
-            # Remove .state extension and add _milestones.json
-            base_name = state_filename.replace('.state', '').replace('.sav', '')
-            milestone_filename = f"{base_name}_milestones.json"
+            # Get the directory and base name of the state file
+            import os
+            state_dir = os.path.dirname(state_filename)
+            base_name = os.path.splitext(os.path.basename(state_filename))[0]
+            milestone_filename = os.path.join(state_dir, f"{base_name}_milestones.json")
+            
             original_filename = self.filename
             self.filename = milestone_filename
             logger.info(f"Loading milestones from state-specific file: {milestone_filename}")
-            self.load_from_file()
-            self.filename = original_filename  # Restore original filename for future saves
-            logger.info(f"Loaded {len(self.milestones)} milestones for state {state_filename}")
+            
+            try:
+                self.load_from_file()
+                logger.info(f"Loaded {len(self.milestones)} milestones for state {state_filename}")
+            except FileNotFoundError:
+                logger.warning(f"Milestone file not found: {milestone_filename}, using default milestones")
+                # Fall back to default milestone file
+                self.filename = original_filename
+                self.load_from_file()
+            except Exception as e:
+                logger.error(f"Error loading milestone file {milestone_filename}: {e}")
+                # Fall back to default milestone file
+                self.filename = original_filename
+                self.load_from_file()
+            finally:
+                # Restore original filename for future saves
+                self.filename = original_filename
         else:
             # Load from default milestone file
             logger.info(f"Loading milestones from default file: {self.filename}")
@@ -117,14 +134,29 @@ class MilestoneTracker:
         """Save milestones to file, optionally with a specific state filename"""
         if state_filename:
             # If a state filename is provided, save milestones to a corresponding file
-            # Remove .state extension and add _milestones.json
-            base_name = state_filename.replace('.state', '').replace('.sav', '')
-            milestone_filename = f"{base_name}_milestones.json"
+            # Get the directory and base name of the state file
+            import os
+            state_dir = os.path.dirname(state_filename)
+            base_name = os.path.splitext(os.path.basename(state_filename))[0]
+            milestone_filename = os.path.join(state_dir, f"{base_name}_milestones.json")
+            
             original_filename = self.filename
             self.filename = milestone_filename
             logger.info(f"Saving {len(self.milestones)} milestones to state-specific file: {milestone_filename}")
-            self.save_to_file()
-            self.filename = original_filename  # Restore original filename
+            
+            try:
+                self.save_to_file()
+                logger.info(f"Successfully saved milestones to {milestone_filename}")
+            except Exception as e:
+                logger.error(f"Error saving milestone file {milestone_filename}: {e}")
+                # Fall back to default milestone file
+                self.filename = original_filename
+                self.save_to_file()
+                return original_filename
+            finally:
+                # Restore original filename
+                self.filename = original_filename
+            
             return milestone_filename
         else:
             # Save to default milestone file
@@ -900,48 +932,14 @@ class EmeraldEmulator:
                 self.check_and_update_milestones(game_state)
                 self._last_milestone_update = current_time
             
-            # Define milestone progression in logical order  
-            milestone_definitions = [
-                # Test milestones
-                {"id": "GAME_RUNNING", "name": "GAME_RUNNING", "category": "basic"},
-                {"id": "HAS_PARTY", "name": "HAS_PARTY", "category": "pokemon"},
-                
-                # Location milestones  
-                {"id": "LITTLEROOT_TOWN", "name": "LITTLEROOT_TOWN", "category": "location"},
-                {"id": "OLDALE_TOWN", "name": "OLDALE_TOWN", "category": "location"},
-                {"id": "PETALBURG_CITY", "name": "PETALBURG_CITY", "category": "location"},
-                {"id": "RUSTBORO_CITY", "name": "RUSTBORO_CITY", "category": "location"},
-                {"id": "DEWFORD_TOWN", "name": "DEWFORD_TOWN", "category": "location"},
-                {"id": "SLATEPORT_CITY", "name": "SLATEPORT_CITY", "category": "location"},
-                {"id": "MAUVILLE_CITY", "name": "MAUVILLE_CITY", "category": "location"},
-                
-                # Pokemon milestones
-                {"id": "STARTER_CHOSEN", "name": "STARTER_CHOSEN", "category": "pokemon"},
-                {"id": "POKEDEX_RECEIVED", "name": "POKEDEX_RECEIVED", "category": "pokemon"},
-                {"id": "FIRST_WILD_ENCOUNTER", "name": "FIRST_WILD_ENCOUNTER", "category": "pokemon"},
-                {"id": "FIRST_POKEMON_CAUGHT", "name": "FIRST_POKEMON_CAUGHT", "category": "pokemon"},
-                {"id": "PARTY_OF_TWO", "name": "PARTY_OF_TWO", "category": "pokemon"},
-                
-                # Badge milestones
-                {"id": "STONE_BADGE", "name": "STONE_BADGE", "category": "badge"},
-                {"id": "KNUCKLE_BADGE", "name": "KNUCKLE_BADGE", "category": "badge"},
-                {"id": "DYNAMO_BADGE", "name": "DYNAMO_BADGE", "category": "badge"},
-                
-                # Progress milestones
-                {"id": "POKEDEX_5_SEEN", "name": "POKEDEX_5_SEEN", "category": "progress"},
-                {"id": "POKEDEX_10_SEEN", "name": "POKEDEX_10_SEEN", "category": "progress"},
-                {"id": "EARNED_1000_POKEDOLLARS", "name": "EARNED_1000_POKEDOLLARS", "category": "progress"},
-            ]
-            
-            # Build milestone list with persistent data
+            # Use loaded milestones from the milestone tracker
             milestones = []
-            for i, milestone_def in enumerate(milestone_definitions):
-                milestone_data = self.milestone_tracker.get_milestone_data(milestone_def["id"])
+            for i, (milestone_id, milestone_data) in enumerate(self.milestone_tracker.milestones.items()):
                 milestones.append({
                     "id": i + 1,
-                    "name": milestone_def["name"],
-                    "category": milestone_def["category"],
-                    "completed": milestone_data["completed"],
+                    "name": milestone_data.get("name", milestone_id),
+                    "category": milestone_data.get("category", "unknown"),
+                    "completed": milestone_data.get("completed", False),
                     "timestamp": milestone_data.get("timestamp", None)
                 })
             
