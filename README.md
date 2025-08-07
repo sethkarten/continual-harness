@@ -517,7 +517,7 @@ You are encouraged to modify and improve the agent in the following ways:
 
 The following modifications are **NOT ALLOWED** for competitive submissions:
 
-- **Memory Reading**: Do not modify `pokemon_env/memory_reader.py` or any memory reading logic
+- **Memory Reading**: Do not modify `pokemon_env/memory_reader.py` or any memory reading logic (e.g., read additional memory addresses not already being read). Feel free to use the already given information as you please (e.g., use the provided map OR do not use the provided map and use the VLM for mapping).
 - **State Observation**: Do not change how game state is extracted or interpreted from memory
 - **Emulator Core**: Do not modify the mGBA emulator integration or core emulation logic
 - **Anti-Cheat Bypass**: Do not attempt to bypass or modify the anti-cheat verification system
