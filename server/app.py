@@ -42,7 +42,7 @@ running = True
 step_count = 0
 agent_step_count = 0  # Track agent steps separately from frame steps
 current_obs = None
-fps = 30  # Changed from 60 to 30 for 4x speedup during dialog
+fps = 60
 
 # Pygame display
 screen_width = 480  # 240 * 2 (upscaled)
@@ -168,9 +168,13 @@ def handle_input(manual_mode=False):
             elif event.key == pygame.K_r:
                 reset_game()
             elif event.key == pygame.K_1:
-                env.save_state("server/simple_test.state")
+                # Use currently loaded state file if one exists, otherwise use default
+                save_file = env._current_state_file if env._current_state_file else "server/simple_test.state"
+                env.save_state(save_file)
             elif event.key == pygame.K_2:
-                env.load_state("server/simple_test.state")
+                # Use currently loaded state file if one exists, otherwise use default
+                load_file = env._current_state_file if env._current_state_file else "server/simple_test.state"
+                env.load_state(load_file)
     
     # Track manual button presses for the action queue display
     if actions_pressed:
@@ -267,14 +271,15 @@ def save_screenshot():
         print(f"Screenshot saved: {filename}")
 
 def reset_game():
-    """Reset the game"""
+    """Reset the game and all milestones"""
     global env, step_count
     
-    print("Resetting game...")
+    print("Resetting game and milestones...")
     with step_lock:
         env.initialize()
+        env.milestone_tracker.reset_all()  # Reset all milestones
         step_count = 0
-    print("Game reset complete")
+    print("Game and milestone reset complete")
 
 def game_loop(manual_mode=False):
     """Main game loop - runs in main thread"""
@@ -362,7 +367,7 @@ async def get_status():
         "base_fps": fps,
         "current_fps": current_fps,
         "is_dialog": is_dialog,
-        "fps_multiplier": 4 if is_dialog else 1
+        "fps_multiplier": 2 if is_dialog else 1
     }
 
 @app.get("/screenshot")
@@ -643,49 +648,7 @@ async def debug_memory_dump(start: int = 0x02000000, length: int = 0x1000):
         logger.error(f"Error dumping memory: {e}")
         return {"error": str(e)}
 
-@app.post("/save_state")
-async def save_state():
-    """Save current game state and milestone progress"""
-    if env is None:
-        raise HTTPException(status_code=400, detail="Emulator not initialized")
-    
-    try:
-        timestamp = int(time.time())
-        filename = f"save_state_{timestamp}.sav"
-        
-        # Save emulator state (includes milestone saving)
-        data = env.save_state(filename)
-        if not data:
-            raise HTTPException(status_code=500, detail="Failed to save emulator state")
-        
-        return {
-            "status": "saved", 
-            "filename": filename, 
-            "size": len(data),
-            "milestones_saved": len(env.milestone_tracker.milestones)
-        }
-    except Exception as e:
-        logger.error(f"Error saving state: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/load_state")
-async def load_state(filename: str):
-    """Load game state from file and corresponding milestone progress"""
-    if env is None:
-        raise HTTPException(status_code=400, detail="Emulator not initialized")
-    
-    try:
-        # Load emulator state (includes milestone loading)
-        env.load_state(filename)
-        
-        return {
-            "status": "loaded", 
-            "filename": filename,
-            "milestones_loaded": len(env.milestone_tracker.milestones)
-        }
-    except Exception as e:
-        logger.error(f"Error loading state: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/agent")
 async def get_agent_thinking():
@@ -1039,8 +1002,6 @@ def main():
     print("  /debug/milestones - Debug milestone tracking system")
     print("  /debug/reset_milestones - Reset all milestones (POST)")
     print("  /debug/test_milestone_operations - Test milestone save/load (POST)")
-    print("  /save_state - Save game state (POST)")
-    print("  /load_state - Load game state (POST)")
     print("  /stop - Stop server")
     
     try:

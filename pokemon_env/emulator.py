@@ -196,6 +196,9 @@ class EmeraldEmulator:
         self._cached_dialog_state = False
         self._last_dialog_check_time = 0
         self._dialog_check_interval = 0.05  # Check dialog state every 50ms (more responsive)
+        
+        # Track currently loaded state file
+        self._current_state_file = None
 
         # Define key mapping for mgba
         self.KEY_MAP = {
@@ -440,11 +443,10 @@ class EmeraldEmulator:
                 # Reset dialog tracking when loading new state
                 if self.memory_reader:
                     self.memory_reader.reset_dialog_tracking()
-                    # Set the current state file for special dialog detection
-                    if path:
-                        self.memory_reader._current_state_file = path
-                    else:
-                        self.memory_reader._current_state_file = None
+                                    # Set the current state file for both emulator and memory reader
+                self._current_state_file = path
+                if self.memory_reader:
+                    self.memory_reader._current_state_file = path
                 
                 # Load corresponding milestones for this state
                 if path:
@@ -802,9 +804,10 @@ class EmeraldEmulator:
                 return False
             elif milestone_id == "PETALBURG_CITY":
                 if game_state:
-                    # Only count Petalburg City if we've already been to Littleroot Town
-                    # (Petalburg flag gets set on title screen, so we need this dependency)
+                    # Enforce proper game progression through required towns
                     if not self.milestone_tracker.is_completed("LITTLEROOT_TOWN"):
+                        return False
+                    if not self.milestone_tracker.is_completed("OLDALE_TOWN"):
                         return False
                     location = game_state.get("player", {}).get("location", "")
                     return "PETALBURG" in str(location).upper()
