@@ -980,6 +980,13 @@ def main():
         try:
             env.load_state(args.load_state)
             print(f"Loaded state from: {args.load_state}")
+            
+            # Force finding map buffer addresses after state load
+            if env.memory_reader:
+                if env.memory_reader._find_map_buffer_addresses():
+                    print(f"Map buffer initialized at 0x{env.memory_reader._map_buffer_addr:08X}")
+                else:
+                    print("Warning: Could not find map buffer addresses after state load")
         except Exception as e:
             print(f"Failed to load state from {args.load_state}: {e}")
             print("Continuing with fresh game state...")

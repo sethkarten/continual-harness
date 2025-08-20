@@ -513,6 +513,15 @@ class GeminiBackend(VLMBackend):
             
             # Generate response
             response = self._call_generate_content(content_parts)
+            
+            # Check for safety filter or content policy issues
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 12:
+                    logger.warning(f"[{module_name}] Gemini safety filter triggered (finish_reason=12). Trying text-only fallback.")
+                    # Fallback to text-only query
+                    return self.get_text_query(text, module_name)
+            
             result = response.text
             
             # Log the response
@@ -524,7 +533,13 @@ class GeminiBackend(VLMBackend):
             
         except Exception as e:
             logger.error(f"Error in Gemini image query: {e}")
-            raise
+            # Try text-only fallback for any Gemini error
+            try:
+                logger.info(f"[{module_name}] Attempting text-only fallback due to error: {e}")
+                return self.get_text_query(text, module_name)
+            except Exception as fallback_error:
+                logger.error(f"[{module_name}] Text-only fallback also failed: {fallback_error}")
+                raise e
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt using Gemini API"""
@@ -536,6 +551,14 @@ class GeminiBackend(VLMBackend):
             
             # Generate response
             response = self._call_generate_content([text])
+            
+            # Check for safety filter or content policy issues
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 12:
+                    logger.warning(f"[{module_name}] Gemini safety filter triggered (finish_reason=12). Returning default response.")
+                    return "I cannot analyze this content due to safety restrictions. I'll proceed with a basic action: press 'A' to continue."
+            
             result = response.text
             
             # Log the response
@@ -547,7 +570,9 @@ class GeminiBackend(VLMBackend):
             
         except Exception as e:
             logger.error(f"Error in Gemini text query: {e}")
-            raise
+            # Return a safe default response
+            logger.warning(f"[{module_name}] Returning default response due to error: {e}")
+            return "I encountered an error processing the request. I'll proceed with a basic action: press 'A' to continue."
 
 class VLM:
     """Main VLM class that supports multiple backends"""

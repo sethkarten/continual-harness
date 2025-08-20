@@ -62,7 +62,9 @@ def run_all_tests():
     print()
     print("💡 Note: For pytest-style tests, run:")
     print("   python -m pytest tests/test_fps_adjustment_pytest.py -v")
+    print("   python -m pytest tests/test_server_map_validation.py -v")
     print("💡 Note: Test state files are located in tests/states/")
+    print("💡 Note: Map reference files are saved in tests/map_references/")
     print()
     
     # Run each test

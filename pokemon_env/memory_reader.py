@@ -191,6 +191,10 @@ class PokemonEmeraldReader:
         self._map_width = None
         self._map_height = None
         
+        # Area transition tracking
+        self._last_map_bank = None
+        self._last_map_number = None
+        
         # Add properties for battle detection (for debug endpoint compatibility)
         self.IN_BATTLE_BIT_ADDR = self.addresses.IN_BATTLE_BIT_ADDR
         self.IN_BATTLE_BITMASK = self.addresses.IN_BATTLE_BITMASK
@@ -527,11 +531,158 @@ class PokemonEmeraldReader:
             return False
 
     def reset_dialog_tracking(self):
-        """Reset dialog tracking state (call when loading new state)"""
+        """Reset dialog tracking state"""
         self._last_dialog_content = None
         self._dialog_fps_start_time = None
         self._dialog_text_start_time = None
-        logger.info("Dialog tracking reset")
+
+    def invalidate_map_cache(self):
+        """Invalidate map-related caches when transitioning between areas"""
+        logger.info("Invalidating map cache due to area transition")
+        self._map_buffer_addr = None
+        self._map_width = None
+        self._map_height = None
+        self._cached_behaviors = None
+        self._cached_behaviors_map_key = None
+        self._mem_cache = {}
+        
+    def _check_area_transition(self):
+        """Check if player has moved to a new area and invalidate cache if needed"""
+        try:
+            current_map_bank = self._read_u8(self.addresses.MAP_BANK)
+            current_map_number = self._read_u8(self.addresses.MAP_NUMBER)
+            
+            # Check if this is the first time or if area has changed
+            if (self._last_map_bank is None or self._last_map_number is None or
+                current_map_bank != self._last_map_bank or 
+                current_map_number != self._last_map_number):
+                
+                if self._last_map_bank is not None:  # Don't log on first run
+                    logger.info(f"Area transition detected: ({self._last_map_bank}, {self._last_map_number}) -> ({current_map_bank}, {current_map_number})")
+                    self.invalidate_map_cache()
+                    
+                    # Also invalidate emulator's comprehensive state cache if callback is set
+                    if hasattr(self, '_emulator_cache_invalidator') and self._emulator_cache_invalidator:
+                        try:
+                            self._emulator_cache_invalidator()
+                        except Exception as e:
+                            logger.debug(f"Failed to invalidate emulator cache: {e}")
+                
+                self._last_map_bank = current_map_bank
+                self._last_map_number = current_map_number
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Failed to check area transition: {e}")
+            # Don't let area transition check failures break map reading
+            
+        return False
+    
+    def _validate_map_data(self, map_data, location_name=""):
+        """Validate that map data looks reasonable based on location and structure"""
+        if not map_data or len(map_data) == 0:
+            return False, "Empty map data"
+            
+        # Basic structure validation
+        height = len(map_data)
+        width = len(map_data[0]) if map_data else 0
+        
+        if height < 5 or width < 5:
+            return False, f"Map too small: {width}x{height}"
+        
+        # Count different tile types (using both behavior and collision data)
+        unknown_tiles = 0
+        impassable_tiles = 0
+        walkable_tiles = 0
+        wall_tiles = 0
+        special_tiles = 0
+        total_tiles = 0
+        
+        for row in map_data:
+            for tile in row:
+                total_tiles += 1
+                if len(tile) >= 4:
+                    tile_id, behavior, collision, elevation = tile
+                    
+                    # Handle both enum objects and integers
+                    if hasattr(behavior, 'name'):
+                        behavior_name = behavior.name
+                    elif isinstance(behavior, int):
+                        try:
+                            behavior_enum = MetatileBehavior(behavior)
+                            behavior_name = behavior_enum.name
+                        except ValueError:
+                            behavior_name = "UNKNOWN"
+                    else:
+                        behavior_name = "UNKNOWN"
+                    
+                    if behavior_name == "UNKNOWN":
+                        unknown_tiles += 1
+                    elif "IMPASSABLE" in behavior_name:
+                        impassable_tiles += 1
+                    elif behavior_name == "NORMAL":
+                        # For normal tiles, use collision to determine if walkable or wall
+                        if collision == 0:
+                            walkable_tiles += 1
+                        else:
+                            wall_tiles += 1
+                    else:
+                        # Other special behaviors (doors, grass, water, etc.)
+                        special_tiles += 1
+                elif len(tile) >= 2:
+                    # Fallback for tiles without collision data
+                    behavior = tile[1]
+                    if hasattr(behavior, 'name'):
+                        behavior_name = behavior.name
+                    elif isinstance(behavior, int):
+                        try:
+                            behavior_enum = MetatileBehavior(behavior)
+                            behavior_name = behavior_enum.name
+                        except ValueError:
+                            behavior_name = "UNKNOWN"
+                    else:
+                        behavior_name = "UNKNOWN"
+                    
+                    if behavior_name == "UNKNOWN":
+                        unknown_tiles += 1
+                    else:
+                        walkable_tiles += 1  # Assume walkable if no collision data
+        
+        # Calculate ratios
+        unknown_ratio = unknown_tiles / total_tiles if total_tiles > 0 else 0
+        impassable_ratio = impassable_tiles / total_tiles if total_tiles > 0 else 0
+        walkable_ratio = walkable_tiles / total_tiles if total_tiles > 0 else 0
+        wall_ratio = wall_tiles / total_tiles if total_tiles > 0 else 0
+        special_ratio = special_tiles / total_tiles if total_tiles > 0 else 0
+        
+        # Validation rules based on location type
+        is_indoor = "HOUSE" in location_name.upper() or "ROOM" in location_name.upper()
+        is_outdoor = "TOWN" in location_name.upper() or "ROUTE" in location_name.upper()
+        
+        # Rule 1: Too many unknown tiles (> 20%)
+        if unknown_ratio > 0.2:
+            return False, f"Too many unknown tiles: {unknown_ratio:.1%}"
+        
+        # Rule 2: Indoor locations should have some walls (>10%) and walkable areas (>20%)
+        if is_indoor:
+            if wall_ratio < 0.1:
+                return False, f"Indoor area has too few walls: {wall_ratio:.1%}"
+            if walkable_ratio < 0.2:
+                return False, f"Indoor area has too few walkable tiles: {walkable_ratio:.1%}"
+        
+        # Rule 3: Outdoor areas should have reasonable balance
+        if is_outdoor:
+            # Should have some walkable areas (>15%) and not be all walls (>95%)
+            if walkable_ratio < 0.15:
+                return False, f"Outdoor area has too few walkable tiles: {walkable_ratio:.1%}"
+            if wall_ratio > 0.95:
+                return False, f"Outdoor area is mostly walls: {wall_ratio:.1%}"
+        
+        # Rule 4: General sanity check - shouldn't be all impassable
+        if impassable_ratio > 0.8:
+            return False, f"Area is mostly impassable: {impassable_ratio:.1%}"
+        
+        return True, f"Map validation passed: {walkable_ratio:.1%} walkable, {wall_ratio:.1%} walls, {special_ratio:.1%} special, {impassable_ratio:.1%} impassable"
 
     def read_coordinates(self) -> Tuple[int, int]:
         """Read player coordinates"""
@@ -738,35 +889,160 @@ class PokemonEmeraldReader:
 
     # Map reading methods (keeping existing implementation for now)
     def _find_map_buffer_addresses(self):
-        """Find map buffer addresses"""
+        """Find map buffer addresses with improved error handling"""
+        # First, try to invalidate any existing cache if we're having issues
+        if self._map_buffer_addr and (self._map_width is None or self._map_height is None):
+            logger.warning("Invalid map cache detected, clearing...")
+            self.invalidate_map_cache()
+        
         for offset in range(0, 0x8000 - 12, 4):
             try:
                 width = self._read_u32(0x03000000 + offset)
                 height = self._read_u32(0x03000000 + offset + 4)
                 
+                # More strict validation for reasonable map dimensions
                 if 10 <= width <= 200 and 10 <= height <= 200:
                     map_ptr = self._read_u32(0x03000000 + offset + 8)
                     
+                    # Validate map pointer is in valid EWRAM range
                     if 0x02000000 <= map_ptr <= 0x02040000:
-                        self._map_buffer_addr = map_ptr
-                        self._map_width = width
-                        self._map_height = height
-                        logger.info(f"Found map buffer at 0x{map_ptr:08X} with size {width}x{height}")
-                        return True
-            except Exception:
+                        # Additional validation: check if the map pointer points to valid memory
+                        try:
+                            # Try to read a small amount of data from the map pointer
+                            test_data = self._read_bytes(map_ptr, 4)
+                            if len(test_data) == 4:
+                                self._map_buffer_addr = map_ptr
+                                self._map_width = width
+                                self._map_height = height
+                                logger.info(f"Found valid map buffer at 0x{map_ptr:08X} with size {width}x{height}")
+                                return True
+                        except Exception as e:
+                            logger.debug(f"Map pointer validation failed at 0x{map_ptr:08X}: {e}")
+                            continue
+            except Exception as e:
+                # Log only if this is a recurring issue
+                if offset % 1000 == 0:
+                    logger.debug(f"Error scanning map buffer at offset {offset}: {e}")
                 continue
         
-        logger.warning("Could not find map buffer addresses")
+        logger.warning("Could not find valid map buffer addresses")
         return False
 
     def read_map_around_player(self, radius: int = 7) -> List[List[Tuple[int, MetatileBehavior, int, int]]]:
-        """Read map area around player"""
+        """Read map area around player with improved error handling for area transitions"""
+        # Check for area transitions (re-enabled with minimal logic)
+        self._check_area_transition()
+        
+        # Always ensure map buffer is found
         if not self._map_buffer_addr:
             if not self._find_map_buffer_addresses():
+                logger.warning("Failed to find map buffer addresses, returning empty map")
                 return []
+        
+        # Read map data with simple validation and retry
+        map_data = self._read_map_data_internal(radius)
+        
+        # Quick validation: check for too many unknown tiles (only for outdoor areas)
+        if map_data and len(map_data) > 0:
+            try:
+                location_name = self.read_location()
+            except Exception:
+                location_name = ""
+            
+            # Only apply validation for outdoor areas, skip for indoor/house areas
+            is_outdoor = any(keyword in location_name.upper() for keyword in ['TOWN', 'ROUTE', 'CITY', 'ROAD', 'PATH'])
+            
+            if is_outdoor:
+                total_tiles = sum(len(row) for row in map_data)
+                unknown_count = 0
+                
+                for row in map_data:
+                    for tile in row:
+                        if len(tile) >= 2:
+                            behavior = tile[1]
+                            if hasattr(behavior, 'name') and behavior.name == 'UNKNOWN':
+                                unknown_count += 1
+                            elif isinstance(behavior, int) and behavior == 0:  # UNKNOWN = 0
+                                unknown_count += 1
+                
+                unknown_ratio = unknown_count / total_tiles if total_tiles > 0 else 0
+                
+                # If more than 50% unknown tiles in outdoor areas, try once more
+                if unknown_ratio > 0.5:
+                    logger.info(f"Outdoor map has {unknown_ratio:.1%} unknown tiles, retrying with cache invalidation")
+                    self.invalidate_map_cache()
+                    if self._find_map_buffer_addresses():
+                        map_data = self._read_map_data_internal(radius)
+            else:
+                logger.debug(f"Skipping validation for indoor area: {location_name}")
+        
+        return map_data
+        
+        # DISABLED: Try reading map with validation and retry logic
+        # Use fewer retries for server performance
+        max_retries = 2
+        for attempt in range(max_retries):
+            # Always try to find map buffer addresses if not already found
+            if not self._map_buffer_addr:
+                if not self._find_map_buffer_addresses():
+                    logger.warning("Failed to find map buffer addresses, returning empty map")
+                    return []
+            
+            # Try to read the map data
+            map_data = self._read_map_data_internal(radius)
+            
+            if not map_data:
+                logger.warning(f"Map read attempt {attempt + 1} returned empty data")
+                if attempt < max_retries - 1:
+                    self.invalidate_map_cache()
+                    continue
+                return []
+            
+            # Validate the map data
+            is_valid, validation_msg = self._validate_map_data(map_data, location_name)
+            
+            if is_valid:
+                logger.debug(f"Map validation passed on attempt {attempt + 1}: {validation_msg}")
+                return map_data
+            else:
+                logger.warning(f"Map validation failed on attempt {attempt + 1}: {validation_msg}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Invalidating cache and retrying... (attempt {attempt + 2}/{max_retries})")
+                    self.invalidate_map_cache()
+                    # Force re-finding map buffer addresses with timeout
+                    import time
+                    start_time = time.time()
+                    if not self._find_map_buffer_addresses():
+                        logger.warning("Failed to re-find map buffer addresses during retry")
+                        continue
+                    # Don't spend too much time on retries (max 2 seconds total)
+                    if time.time() - start_time > 2.0:
+                        logger.warning("Map buffer search taking too long, returning current data")
+                        return map_data
+                else:
+                    logger.warning(f"All {max_retries} map reading attempts failed validation, returning data anyway")
+                    return map_data  # Return the last attempt even if invalid
+        
+        return []
+    
+    def _read_map_data_internal(self, radius: int = 7) -> List[List[Tuple[int, MetatileBehavior, int, int]]]:
+        """Internal method to read map data without validation/retry logic"""
         
         try:
             player_x, player_y = self.read_coordinates()
+            
+            # Validate player coordinates
+            if player_x < 0 or player_y < 0:
+                logger.warning(f"Invalid player coordinates: ({player_x}, {player_y})")
+                return []
+            
+            # Check if map dimensions are valid
+            if not self._map_width or not self._map_height:
+                logger.warning("Invalid map dimensions, attempting to re-find map buffer")
+                self.invalidate_map_cache()
+                if not self._find_map_buffer_addresses():
+                    return []
+            
             map_x = player_x + 7
             map_y = player_y + 7
             
@@ -775,17 +1051,29 @@ class PokemonEmeraldReader:
             x_end = min(self._map_width, map_x + radius + 1)
             y_end = min(self._map_height, map_y + radius + 1)
             
+            # Validate that we have a reasonable area to read
+            if x_end <= x_start or y_end <= y_start:
+                logger.warning(f"Invalid map reading area: x({x_start}-{x_end}), y({y_start}-{y_end})")
+                return []
+            
             width = x_end - x_start
             height = y_end - y_start
             
+            # Additional validation for reasonable dimensions
+            if width > 50 or height > 50:
+                logger.warning(f"Map reading area too large: {width}x{height}, limiting to 15x15")
+                width = min(width, 15)
+                height = min(height, 15)
+            
             return self.read_map_metatiles(x_start, y_start, width, height)
         except Exception as e:
-            logger.warning(f"Failed to read map around player: {e}")
+            logger.warning(f"Failed to read map data internally: {e}")
             return []
 
     def read_map_metatiles(self, x_start: int = 0, y_start: int = 0, width: int = None, height: int = None) -> List[List[Tuple[int, MetatileBehavior, int, int]]]:
-        """Read map metatiles"""
+        """Read map metatiles with improved error handling"""
         if not self._map_buffer_addr:
+            logger.warning("No map buffer address available")
             return []
         
         if width is None:
@@ -793,24 +1081,50 @@ class PokemonEmeraldReader:
         if height is None:
             height = self._map_height
         
+        # Validate dimensions
+        if not width or not height:
+            logger.warning(f"Invalid map dimensions: {width}x{height}")
+            return []
+        
         width = min(width, self._map_width - x_start)
         height = min(height, self._map_height - y_start)
+        
+        # Additional validation
+        if width <= 0 or height <= 0:
+            logger.warning(f"Invalid reading area: {width}x{height} at ({x_start}, {y_start})")
+            return []
         
         try:
             metatiles = []
             for y in range(y_start, y_start + height):
                 row = []
                 for x in range(x_start, x_start + width):
-                    index = x + y * self._map_width
-                    metatile_addr = self._map_buffer_addr + (index * 2)
-                    metatile_value = self._read_u16(metatile_addr)
-                    
-                    metatile_id = metatile_value & 0x03FF
-                    collision = (metatile_value & 0x0C00) >> 10
-                    elevation = (metatile_value & 0xF000) >> 12
-                    
-                    behavior = self.get_exact_behavior_from_id(metatile_id)
-                    row.append((metatile_id, behavior, collision, elevation))
+                    try:
+                        index = x + y * self._map_width
+                        metatile_addr = self._map_buffer_addr + (index * 2)
+                        
+                        # Validate address before reading
+                        if metatile_addr < self._map_buffer_addr or metatile_addr >= self._map_buffer_addr + (self._map_width * self._map_height * 2):
+                            logger.debug(f"Invalid metatile address: 0x{metatile_addr:08X}")
+                            row.append((0, MetatileBehavior.NORMAL, 0, 0))
+                            continue
+                        
+                        metatile_value = self._read_u16(metatile_addr)
+                        
+                        metatile_id = metatile_value & 0x03FF
+                        collision = (metatile_value & 0x0C00) >> 10
+                        elevation = (metatile_value & 0xF000) >> 12
+                        
+                        # Validate metatile ID
+                        if metatile_id > 0x3FF:
+                            logger.debug(f"Invalid metatile ID: {metatile_id}")
+                            metatile_id = 0
+                        
+                        behavior = self.get_exact_behavior_from_id(metatile_id)
+                        row.append((metatile_id, behavior, collision, elevation))
+                    except Exception as e:
+                        logger.debug(f"Error reading metatile at ({x}, {y}): {e}")
+                        row.append((0, MetatileBehavior.NORMAL, 0, 0))
                 metatiles.append(row)
             
             return metatiles
@@ -1072,10 +1386,45 @@ class PokemonEmeraldReader:
                         
                         # Traversability
                         if behavior_name == "NORMAL":
-                            traversability_row.append("." if collision == 0 else "0")
+                            traversability_row.append("." if collision == 0 else "#")
+                        elif "TALL_GRASS" in behavior_name:
+                            traversability_row.append("~")
+                        elif "WATER" in behavior_name:
+                            traversability_row.append("W")
+                        elif "DOOR" in behavior_name:
+                            traversability_row.append("D")
+                        elif "JUMP" in behavior_name:
+                            # Show jump direction
+                            if "JUMP_EAST" in behavior_name:
+                                traversability_row.append("→")
+                            elif "JUMP_WEST" in behavior_name:
+                                traversability_row.append("←")
+                            elif "JUMP_NORTH" in behavior_name:
+                                traversability_row.append("↑")
+                            elif "JUMP_SOUTH" in behavior_name:
+                                traversability_row.append("↓")
+                            elif "JUMP_NORTHEAST" in behavior_name:
+                                traversability_row.append("↗")
+                            elif "JUMP_NORTHWEST" in behavior_name:
+                                traversability_row.append("↖")
+                            elif "JUMP_SOUTHEAST" in behavior_name:
+                                traversability_row.append("↘")
+                            elif "JUMP_SOUTHWEST" in behavior_name:
+                                traversability_row.append("↙")
+                            else:
+                                traversability_row.append("J")
+                        elif "IMPASSABLE" in behavior_name or "SEALED" in behavior_name:
+                            traversability_row.append("#")  # Treat as blocked
+                        elif "INDOOR" in behavior_name:
+                            traversability_row.append(".")  # Treat as normal indoor tile
+                        elif "DECORATION" in behavior_name or "HOLDS" in behavior_name:
+                            traversability_row.append(".")  # Treat decorations as walkable
                         else:
-                            short_name = behavior_name.replace("_", "")[:4]
-                            traversability_row.append(short_name)
+                            # For other behaviors, use a more descriptive approach
+                            if collision > 0:
+                                traversability_row.append("#")  # Blocked
+                            else:
+                                traversability_row.append(".")  # Walkable
                     
                     tile_names.append(row_names)
                     metatile_behaviors.append(row_behaviors)
