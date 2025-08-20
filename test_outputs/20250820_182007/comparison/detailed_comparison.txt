@@ -1,0 +1,44 @@
+=== DETAILED COMPARISON REPORT ===
+
+Test run: 2025-08-20 18:20:13
+
+DIRECT EMULATOR RESULTS:
+------------------------------
+  approach: direct_emulator
+  house_location: LITTLEROOT TOWN BRENDANS HOUSE 1F
+  house_position: (8, 7)
+  house_map_size: 15x15
+  outside_location: LITTLEROOT TOWN
+  outside_position: (5, 9)
+  outside_map_size: 15x15
+  unknown_ratio: 0.0%
+  success: True
+
+SERVER RESULTS:
+------------------------------
+  approach: server
+  house_location: LITTLEROOT TOWN BRENDANS HOUSE 1F
+  house_position: (8, 7)
+  house_map_size: 15x15
+  house_unknown_ratio: 38.2%
+  outside_location: LITTLEROOT TOWN
+  outside_position: (5, 8)
+  outside_map_size: 15x15
+  outside_unknown_ratio: 39.6%
+  success: False
+  corruption_type: Indoor elements found: {134}
+
+COMPARISON ANALYSIS:
+------------------------------
+Direct emulator success: True
+Server success: False
+CONCLUSION: Server-specific map corruption issue confirmed
+
+Map quality comparison:
+  Direct emulator unknown tiles: 0.0%
+  Server unknown tiles: 39.6%
+
+FILES SAVED:
+  Direct emulator maps: test_outputs/20250820_182007/direct_emulator/
+  Server maps: test_outputs/20250820_182007/server/
+  Ground truth comparison: tests/ground_truth/

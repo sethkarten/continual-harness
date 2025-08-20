@@ -1,0 +1,13 @@
+=== TEST ANALYSIS SUMMARY ===
+
+approach: server
+house_location: LITTLEROOT TOWN BRENDANS HOUSE 1F
+house_position: (8, 7)
+house_map_size: 15x15
+house_unknown_ratio: 38.2%
+outside_location: LITTLEROOT TOWN
+outside_position: (5, 8)
+outside_map_size: 15x15
+outside_unknown_ratio: 39.6%
+success: False
+corruption_type: Indoor elements found: {134}

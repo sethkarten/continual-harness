@@ -1,0 +1,22 @@
+=== Server Outside - LITTLEROOT TOWN ===
+Format: (MetatileID, Behavior, X, Y)
+Map dimensions: 15x15
+
+--- TRAVERSABILITY MAP ---
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 
+    ------------------------------
+ 0: IM IM IM IM W W W W W W W W W W .
+ 1: IM IM IM IM IM IM IM IM IM IM IM IM IM # #
+ 2: # # # # # # # IM IM IM IM IM IM IM IM
+ 3: UN UN UN UN UN ↓ . . ↓ UN UN UN UN UN W
+ 4: IM IM IM IM IM # # . . . . . . . .
+ 5: IM IM IM IM IM IM IM IM IM IM IM IM IM IM UN
+ 6: . . . . . . ↓ UN IM IM IM IM IM IM IM
+ 7: . . . . . . . P . . . . . . .
+ 8: IM IM IM IM IM IM . . # D D D # . .
+ 9: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+10: . . # # # # # . . IM IM IM IM IM IM
+11: # # # # # . . . . . . # # # #
+12: IM IM IM IM IM IM IM PC . # # # # # TE
+13: . IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+14: . . . . . . . . . PC IM IM IM IM IM
