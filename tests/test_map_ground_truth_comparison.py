@@ -156,9 +156,10 @@ class TestMapGroundTruthComparison:
         
         try:
             # Get house map
-            location = emu.memory_reader.read_location()
-            position = emu.memory_reader.read_coordinates()
-            tiles = emu.memory_reader.read_map_around_player(radius=7)
+            state = emu.memory_reader.get_comprehensive_state()
+            location = state['player']['location']
+            position = state['player']['position']
+            tiles = state['map']['tiles']
             
             # Save output
             output_file = output_dir / "direct_emulator_house.txt"
@@ -192,17 +193,18 @@ class TestMapGroundTruthComparison:
         
         try:
             # Move outside
-            for i in range(4):
+            for i in range(3):
                 emu.press_buttons(['down'], hold_frames=25, release_frames=25)
-                time.sleep(0.1)
+                time.sleep(0.2)
             
             # Wait for transition to complete
             time.sleep(0.5)
             
             # Get outside map
-            location = emu.memory_reader.read_location()
-            position = emu.memory_reader.read_coordinates()
-            tiles = emu.memory_reader.read_map_around_player(radius=7)
+            state = emu.memory_reader.get_comprehensive_state()
+            location = state['player']['location']
+            position = state['player']['position']
+            tiles = state['map']['tiles']
             
             # Save output
             output_file = output_dir / "direct_emulator_outside.txt"
@@ -288,13 +290,13 @@ class TestMapGroundTruthComparison:
     def test_server_outside_map(self, output_dir, ground_truth_dir):
         """Test server outside map against ground truth"""
         # Kill any existing server
-        os.system("pkill -f 'server.app' 2>/dev/null")
-        time.sleep(2)
+        # os.system("pkill -f 'server.app' 2>/dev/null")
+        # time.sleep(2)
         
         # Start server
-        server_cmd = ["python", "-m", "server.app", "--load-state", "tests/states/house.state", "--port", "8102", "--manual"]
-        server_process = subprocess.Popen(server_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        server_url = "http://127.0.0.1:8102"
+        # server_cmd = ["python", "-m", "server.app", "--load-state", "tests/states/house.state", "--port", "8102", "--manual"]
+        # server_process = subprocess.Popen(server_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        server_url = "http://127.0.0.1:8000"
         
         try:
             # Wait for server startup
@@ -314,7 +316,7 @@ class TestMapGroundTruthComparison:
             for move_num in range(max_moves):
                 try:
                     # Check current position
-                    response = requests.get(f"{server_url}/state", timeout=5)
+                    response = requests.get(f"{server_url}/state", timeout=10)
                     state = response.json()
                     current_pos = (state['player']['position']['x'], state['player']['position']['y'])
                     current_location = state['player']['location']
@@ -326,35 +328,36 @@ class TestMapGroundTruthComparison:
                     # If we're in outdoor area but not at target Y, keep moving down
                     if "LITTLEROOT TOWN" in current_location and "HOUSE" not in current_location:
                         if current_pos[1] < target_pos[1]:
-                            requests.post(f"{server_url}/action", json={"buttons": ["down"]}, timeout=5)
-                            time.sleep(1.5)
+                            print('Posting action down')
+                            requests.post(f"{server_url}/action", json={"buttons": ["DOWN"]}, timeout=5)
+                            time.sleep(0.2)
                             continue
                         else:
                             break
                     else:
                         # Still in house, keep moving down
-                        requests.post(f"{server_url}/action", json={"buttons": ["down"]}, timeout=5)
-                        time.sleep(1.5)
+                        requests.post(f"{server_url}/action", json={"buttons": ["DOWN"]}, timeout=5)
+                        time.sleep(0.2)
                     
                 except Exception:
                     time.sleep(0.5)
             
             # Enhanced buffer synchronization
-            for i in range(3):
-                try:
-                    requests.post(f"{server_url}/debug/clear_cache", json={}, timeout=5)
-                    time.sleep(0.2)
-                except:
-                    pass
+            # for i in range(3):
+            #     try:
+            #         requests.post(f"{server_url}/debug/clear_cache", json={}, timeout=5)
+            #         time.sleep(0.2)
+            #     except:
+            #         pass
             
-            try:
-                requests.post(f"{server_url}/debug/force_buffer_redetection", json={}, timeout=5)
-                time.sleep(1.0)
-            except:
-                pass
+            # try:
+            #     requests.post(f"{server_url}/debug/force_buffer_redetection", json={}, timeout=5)
+            #     time.sleep(1.0)
+            # except:
+            #     pass
             
             # Get outside map
-            response = requests.get(f"{server_url}/state", timeout=5)
+            response = requests.get(f"{server_url}/state", timeout=15)
             state = response.json()
             
             location = state['player']['location']

@@ -9,6 +9,7 @@ from pokemon_env.enums import MetatileBehavior
 
 def format_map_data(map_data, title="Map Data"):
     """Format the map data into a string using the agent's format"""
+    print(f"Map data: {map_data}")
     lines = []
     lines.append(f"=== {title} ===")
     lines.append("Format: (MetatileID, Behavior, X, Y)")

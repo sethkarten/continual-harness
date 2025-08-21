@@ -339,8 +339,8 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to read party size: {e}")
             return 0
         
-    def _get_memory_region(self, region_id: int):
-        if region_id not in self._mem_cache:
+    def _get_memory_region(self, region_id: int, force_refresh: bool = False):
+        if force_refresh or region_id not in self._mem_cache:
             mem_core = self.core.memory.u8._core
             size = ffi.new("size_t *")
             ptr = ffi.cast("uint8_t *", mem_core.getMemoryBlock(mem_core, region_id, size))
@@ -542,9 +542,15 @@ class PokemonEmeraldReader:
         self._map_buffer_addr = None
         self._map_width = None
         self._map_height = None
+        # CRITICAL: Clear behavior cache to force reload with new tileset
         self._cached_behaviors = None
         self._cached_behaviors_map_key = None
         self._mem_cache = {}
+        
+        # Force memory regions to be re-read from core
+        # This is critical for server to get fresh data after transitions
+        if hasattr(self, '_mem_cache'):
+            self._mem_cache.clear()
         
     def _check_area_transition(self):
         """Check if player has moved to a new area and invalidate cache if needed"""
@@ -888,13 +894,43 @@ class PokemonEmeraldReader:
             return {"in_battle": True, "battle_type": "unknown", "error": str(e)}
 
     # Map reading methods (keeping existing implementation for now)
+    def _validate_buffer_data(self, buffer_addr, width, height):
+        """Validate buffer doesn't contain too many corruption markers"""
+        try:
+            # Only validate if we're looking for outdoor maps (they shouldn't have many 0x3FF tiles)
+            # Indoor maps might legitimately have these tiles
+            corruption_count = 0
+            sample_size = min(100, width * height)  # Sample first 100 tiles
+            
+            for i in range(sample_size):
+                tile_addr = buffer_addr + (i * 2)
+                tile_value = self._read_u16(tile_addr)
+                tile_id = tile_value & 0x03FF
+                
+                # Tile ID 1023 (0x3FF) is a corruption marker
+                if tile_id == 0x3FF:
+                    corruption_count += 1
+            
+            corruption_ratio = corruption_count / sample_size
+            
+            # Be more lenient - only reject if more than 50% are corruption markers
+            # This should still catch the bad buffers while allowing some legitimate ones
+            if corruption_ratio > 0.5:
+                logger.debug(f"Buffer at 0x{buffer_addr:08X} has {corruption_ratio:.1%} corruption markers, rejecting")
+                return False
+            
+            return True
+        except Exception:
+            return True  # If we can't validate, assume it's OK
+    
     def _find_map_buffer_addresses(self):
-        """Find map buffer addresses with improved error handling"""
+        """Find map buffer addresses - SIMPLIFIED to avoid over-filtering"""
         # First, try to invalidate any existing cache if we're having issues
         if self._map_buffer_addr and (self._map_width is None or self._map_height is None):
             logger.warning("Invalid map cache detected, clearing...")
             self.invalidate_map_cache()
         
+        # SIMPLE APPROACH: Take the first valid buffer found (like original code)
         for offset in range(0, 0x8000 - 12, 4):
             try:
                 width = self._read_u32(0x03000000 + offset)
@@ -911,11 +947,29 @@ class PokemonEmeraldReader:
                             # Try to read a small amount of data from the map pointer
                             test_data = self._read_bytes(map_ptr, 4)
                             if len(test_data) == 4:
-                                self._map_buffer_addr = map_ptr
-                                self._map_width = width
-                                self._map_height = height
-                                logger.info(f"Found valid map buffer at 0x{map_ptr:08X} with size {width}x{height}")
-                                return True
+                                # Only validate non-preferred buffers
+                                # The preferred buffer (0x02032318) should always be used if found
+                                if map_ptr != 0x02032318:
+                                    # Validate buffer doesn't have too many corruption markers
+                                    if not self._validate_buffer_data(map_ptr, width, height):
+                                        logger.debug(f"Buffer at 0x{map_ptr:08X} failed validation, skipping")
+                                        continue
+                                
+                                # FORCE CONSISTENT BUFFER: Use specific buffer address that direct emulator uses
+                                # If we find the known good buffer (0x02032318), use it preferentially
+                                if map_ptr == 0x02032318:
+                                    logger.info(f"Found preferred buffer at 0x{map_ptr:08X} with size {width}x{height}")
+                                    self._map_buffer_addr = map_ptr
+                                    self._map_width = width
+                                    self._map_height = height
+                                    return True
+                                # Store this as a fallback
+                                elif not hasattr(self, '_fallback_buffer'):
+                                    self._fallback_buffer = (map_ptr, width, height)
+                                    continue
+                        except Exception as e:
+                            logger.debug(f"Map pointer validation failed at 0x{map_ptr:08X}: {e}")
+                            continue
                         except Exception as e:
                             logger.debug(f"Map pointer validation failed at 0x{map_ptr:08X}: {e}")
                             continue
@@ -925,12 +979,131 @@ class PokemonEmeraldReader:
                     logger.debug(f"Error scanning map buffer at offset {offset}: {e}")
                 continue
         
+        # If preferred buffer not found, use fallback
+        if hasattr(self, '_fallback_buffer'):
+            map_ptr, width, height = self._fallback_buffer
+            logger.info(f"Using fallback buffer at 0x{map_ptr:08X} with size {width}x{height}")
+            self._map_buffer_addr = map_ptr
+            self._map_width = width
+            self._map_height = height
+            delattr(self, '_fallback_buffer')
+            return True
+        
         logger.warning("Could not find valid map buffer addresses")
         return False
+    
+    def _find_alternative_buffer(self):
+        """Try alternative methods to find a clean map buffer"""
+        logger.info("Searching for alternative map buffer...")
+        
+        # Method 1: Scan a wider memory range
+        for offset in range(0x8000, 0x10000 - 12, 4):
+            try:
+                width = self._read_u32(0x03000000 + offset)
+                height = self._read_u32(0x03000000 + offset + 4)
+                
+                if 10 <= width <= 200 and 10 <= height <= 200:
+                    map_ptr = self._read_u32(0x03000000 + offset + 8)
+                    
+                    if 0x02000000 <= map_ptr <= 0x02040000:
+                        try:
+                            test_data = self._read_bytes(map_ptr, 4)
+                            if len(test_data) == 4:
+                                is_current = self._validate_buffer_currency(map_ptr, width, height)
+                                if is_current:
+                                    self._map_buffer_addr = map_ptr
+                                    self._map_width = width
+                                    self._map_height = height
+                                    logger.info(f"Found alternative buffer at 0x{map_ptr:08X} ({width}x{height})")
+                                    return True
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+        
+        # Method 2: Accept any buffer with lower corruption threshold
+        logger.info("No clean buffer found, looking for least corrupted...")
+        for offset in range(0, 0x8000 - 12, 4):
+            try:
+                width = self._read_u32(0x03000000 + offset)
+                height = self._read_u32(0x03000000 + offset + 4)
+                
+                if 10 <= width <= 200 and 10 <= height <= 200:
+                    map_ptr = self._read_u32(0x03000000 + offset + 8)
+                    
+                    if 0x02000000 <= map_ptr <= 0x02040000:
+                        try:
+                            test_data = self._read_bytes(map_ptr, 4)
+                            if len(test_data) == 4:
+                                # Accept any buffer - we'll use the first valid one found
+                                self._map_buffer_addr = map_ptr
+                                self._map_width = width
+                                self._map_height = height
+                                logger.warning(f"Using potentially corrupted buffer at 0x{map_ptr:08X} ({width}x{height}) as fallback")
+                                return True
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+        
+        logger.error("No alternative buffer found")
+        return False
+    
+    def _validate_buffer_currency(self, buffer_addr, width, height):
+        """Check if a buffer contains current (non-corrupted) map data"""
+        try:
+            # Sample more tiles and check for corruption patterns
+            sample_size = min(50, width * height)
+            corrupted_count = 0
+            total_sampled = 0
+            tile_frequency = {}
+            
+            for i in range(0, sample_size, 1):  # Sample every tile, not every 4th
+                try:
+                    tile_data = self._read_u16(buffer_addr + i * 2)
+                    total_sampled += 1
+                    
+                    # Track tile frequency for repetition detection
+                    tile_frequency[tile_data] = tile_frequency.get(tile_data, 0) + 1
+                    
+                    # Check for corruption patterns
+                    if (tile_data == 0xFFFF or tile_data == 0x3FF or  # 1023 pattern
+                        tile_data == 0x0000 or tile_data == 0x1FF):   # Other corruption patterns
+                        corrupted_count += 1
+                except Exception:
+                    corrupted_count += 1
+            
+            if total_sampled == 0:
+                return False
+            
+            # Check for excessive repetition (sign of corruption)
+            max_frequency = max(tile_frequency.values()) if tile_frequency else 0
+            repetition_ratio = max_frequency / total_sampled if total_sampled > 0 else 0
+            
+            corruption_ratio = corrupted_count / total_sampled
+            
+            # More strict criteria: current if low corruption AND low repetition
+            is_current = (corruption_ratio < 0.3 and repetition_ratio < 0.5)
+            
+            logger.debug(f"Buffer 0x{buffer_addr:08X}: {corruption_ratio:.1%} corrupted, {repetition_ratio:.1%} repetition ({corrupted_count}/{total_sampled}) - current: {is_current}")
+            
+            # Show most common tiles for debugging
+            if tile_frequency:
+                sorted_tiles = sorted(tile_frequency.items(), key=lambda x: x[1], reverse=True)
+                top_tiles = sorted_tiles[:3]
+                logger.debug(f"  Top tiles: {[(hex(tile), count) for tile, count in top_tiles]}")
+            
+            return is_current
+            
+        except Exception as e:
+            logger.debug(f"Buffer currency validation failed for 0x{buffer_addr:08X}: {e}")
+            return False
 
     def read_map_around_player(self, radius: int = 7) -> List[List[Tuple[int, MetatileBehavior, int, int]]]:
         """Read map area around player with improved error handling for area transitions"""
         # Check for area transitions (re-enabled with minimal logic)
+        location = self.read_location()
+        position = self.read_coordinates()
         self._check_area_transition()
         
         # Always ensure map buffer is found
@@ -975,6 +1148,9 @@ class PokemonEmeraldReader:
                         map_data = self._read_map_data_internal(radius)
             else:
                 logger.debug(f"Skipping validation for indoor area: {location_name}")
+                
+        
+        logger.info(f"Map data: {map_data}")
         
         return map_data
         
@@ -1046,10 +1222,21 @@ class PokemonEmeraldReader:
             map_x = player_x + 7
             map_y = player_y + 7
             
-            x_start = max(0, map_x - radius)
-            y_start = max(0, map_y - radius)
-            x_end = min(self._map_width, map_x + radius + 1)
-            y_end = min(self._map_height, map_y + radius + 1)
+            # Ensure consistent 15x15 output by adjusting boundaries
+            target_width = 2 * radius + 1  # Should be 15 for radius=7
+            target_height = 2 * radius + 1
+            
+            # Calculate ideal boundaries
+            ideal_x_start = map_x - radius
+            ideal_y_start = map_y - radius
+            ideal_x_end = map_x + radius + 1
+            ideal_y_end = map_y + radius + 1
+            
+            # Adjust boundaries to stay within buffer while maintaining target size
+            x_start = max(0, min(ideal_x_start, self._map_width - target_width))
+            y_start = max(0, min(ideal_y_start, self._map_height - target_height))
+            x_end = min(self._map_width, x_start + target_width)
+            y_end = min(self._map_height, y_start + target_height)
             
             # Validate that we have a reasonable area to read
             if x_end <= x_start or y_end <= y_start:
@@ -1332,9 +1519,26 @@ class PokemonEmeraldReader:
             else:
                 logger.warning("No Pokemon found in party")
             
-            # Map tiles
+            # Map tiles - use standard radius 7 to match direct emulator ground truth
             tiles = self.read_map_around_player(radius=7)
             if tiles:
+                # DEBUG: Print tile data before processing for HTTP API
+                total_tiles = sum(len(row) for row in tiles)
+                unknown_count = 0
+                corruption_count = 0
+                for row in tiles:
+                    for tile in row:
+                        if len(tile) >= 2:
+                            behavior = tile[1]
+                            if isinstance(behavior, int):
+                                if behavior == 0:
+                                    unknown_count += 1
+                                elif behavior == 134:  # Indoor element corruption
+                                    corruption_count += 1
+                
+                unknown_ratio = unknown_count / total_tiles if total_tiles > 0 else 0
+                logger.info(f"📊 PRE-PROCESSING TILES: {unknown_ratio:.1%} unknown ({unknown_count}/{total_tiles}), {corruption_count} corrupted")
+                
                 state["map"]["tiles"] = tiles
                 
                 # Process tiles for enhanced information

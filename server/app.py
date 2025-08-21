@@ -210,21 +210,38 @@ def step_environment(actions_pressed):
         with step_lock:
             env.run_frame_with_buttons(actions_pressed)
             
-            # SIMPLE FIX: Check for location name changes and invalidate cache
+            # IMPROVED AREA TRANSITION DETECTION: Use proper _check_area_transition method
             if hasattr(env, 'memory_reader') and env.memory_reader:
                 try:
-                    current_location = env.memory_reader.read_location()
+                    # Use the built-in area transition detection
+                    transition_detected = env.memory_reader._check_area_transition()
                     
-                    # Check if location changed (simple string comparison)
+                    if transition_detected:
+                        logger.info("Area transition detected by _check_area_transition()")
+                        
+                        # Force complete cache invalidation
+                        env.memory_reader.invalidate_map_cache()
+                        
+                        # Clear behavior cache specifically - this is the key fix
+                        if hasattr(env.memory_reader, '_cached_behaviors'):
+                            env.memory_reader._cached_behaviors = None
+                        if hasattr(env.memory_reader, '_cached_behaviors_map_key'):
+                            env.memory_reader._cached_behaviors_map_key = None
+                        
+                        # Clear memory region cache for EWRAM (where map buffer lives)
+                        if hasattr(env.memory_reader, '_mem_cache'):
+                            env.memory_reader._mem_cache.clear()
+                        
+                        # Let the system naturally refresh rather than forcing immediate re-detection
+                        logger.info("Caches cleared for area transition")
+                    
+                    # Also do a basic location name check as backup
+                    current_location = env.memory_reader.read_location()
                     if hasattr(env, '_last_location_check'):
                         if current_location != env._last_location_check:
-                            logger.info(f"Location changed: {env._last_location_check} -> {current_location}")
-                            # Simple cache invalidation
+                            logger.info(f"Location name changed: {env._last_location_check} -> {current_location}")
+                            # Additional cache clearing for location name changes
                             env.memory_reader.invalidate_map_cache()
-                            if hasattr(env, '_cached_state'):
-                                delattr(env, '_cached_state')
-                            if hasattr(env, '_cached_state_time'):
-                                delattr(env, '_cached_state_time')
                     
                     env._last_location_check = current_location
                 except Exception as e:
@@ -327,7 +344,7 @@ def game_loop(manual_mode=False):
         # Update milestones based on current state (for manual mode too)
         # Only update milestones occasionally to avoid performance issues
         try:
-            if step_count % 10 == 0:  # Only update every 10 steps
+            if step_count % 20 == 0:  # Only update every 20 steps
                 state = env.get_comprehensive_state()
                 env.check_and_update_milestones(state)
         except Exception as e:
@@ -509,20 +526,15 @@ async def get_comprehensive_state():
         raise HTTPException(status_code=400, detail="Emulator not initialized")
     
     try:
-        # Use memory lock to prevent race conditions during area transitions
-        with memory_lock:
-            # Clear the comprehensive state cache to ensure fresh data
-            if hasattr(env, '_cached_state'):
-                delattr(env, '_cached_state')
-            if hasattr(env, '_cached_state_time'):
-                delattr(env, '_cached_state_time')
-            
-            # SIMPLE FIX: Basic area transition check  
-            if hasattr(env, 'memory_reader') and env.memory_reader:
-                env.memory_reader._check_area_transition()
-            
-            # Get fresh comprehensive state from emulator with thread safety
-            state = env.get_comprehensive_state()
+        # Clear the comprehensive state cache to ensure fresh data
+        if hasattr(env, '_cached_state'):
+            delattr(env, '_cached_state')
+        if hasattr(env, '_cached_state_time'):
+            delattr(env, '_cached_state_time')
+        
+        # Get fresh comprehensive state from emulator
+        # No memory lock needed - area transitions are handled in step_environment
+        state = env.get_comprehensive_state()
         
         # Ensure game state is consistent with cached dialog state
         # Use the same cached dialog state as the status endpoint
@@ -565,6 +577,68 @@ async def get_comprehensive_state():
     except Exception as e:
         logger.error(f"Error getting comprehensive state: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+    
+def format_map_for_comparison(self, tiles, title, location, position):
+    """Format map tiles for comparison with ground truth format"""
+    if not tiles:
+        return f"=== {title} ===\nNo tiles available\n"
+    
+    output = []
+    output.append(f"=== {title} ===")
+    output.append(f"Format: (MetatileID, Behavior, X, Y)")
+    output.append(f"Map dimensions: {len(tiles)}x{len(tiles[0]) if tiles else 0}")
+    output.append("")
+    output.append("--- TRAVERSABILITY MAP ---")
+    
+    # Header with column numbers
+    header = "      " + "  ".join(f"{i:2}" for i in range(len(tiles[0]) if tiles else 0))
+    output.append(header)
+    output.append("    " + "-" * (len(header) - 4))
+    
+    # Map rows
+    for row_idx, row in enumerate(tiles):
+        traversability_row = []
+        for col_idx, tile in enumerate(row):
+            if len(tile) >= 4:
+                tile_id, behavior, collision, elevation = tile
+                behavior_val = behavior if not hasattr(behavior, 'value') else behavior.value
+                
+                # Convert to traversability symbol
+                if behavior_val == 0:  # NORMAL
+                    symbol = "." if collision == 0 else "#"
+                elif behavior_val == 1:  # SECRET_BASE_WALL
+                    symbol = "#"
+                elif behavior_val == 51:  # IMPASSABLE_SOUTH
+                    symbol = "IM"
+                elif behavior_val == 96:  # NON_ANIMATED_DOOR
+                    symbol = "D"
+                elif behavior_val == 101:  # SOUTH_ARROW_WARP
+                    symbol = "SO"
+                elif behavior_val == 105:  # ANIMATED_DOOR
+                    symbol = "D"
+                elif behavior_val == 134:  # TELEVISION
+                    symbol = "TE"
+                else:
+                    symbol = "."  # Default to walkable for other behaviors
+                
+                # Mark player position
+                if position and len(position) >= 2:
+                    # Calculate if this tile is player position
+                    # Player is at center of 15x15 map (position 7,7)
+                    if row_idx == 7 and col_idx == 7:
+                        symbol = "P"
+                
+                traversability_row.append(symbol)
+            else:
+                traversability_row.append("?")
+        
+        # Format row with row number
+        row_str = f"{row_idx:2}: " + " ".join(f"{symbol:1}" for symbol in traversability_row)
+        output.append(row_str)
+    
+    return "\n".join(output)
+    
 
 @app.get("/debug/memory")
 async def debug_memory():
