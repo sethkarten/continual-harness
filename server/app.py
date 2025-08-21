@@ -54,6 +54,7 @@ clock = None
 # Threading locks for thread safety
 obs_lock = threading.Lock()
 step_lock = threading.Lock()
+memory_lock = threading.Lock()  # New lock for memory operations to prevent race conditions
 
 # Button mapping
 button_map = {
@@ -201,16 +202,38 @@ def handle_input(manual_mode=False):
     return True, actions_pressed
 
 def step_environment(actions_pressed):
-    """Take a step in the environment"""
+    """Take a step in the environment with comprehensive locking for race condition prevention"""
     global current_obs
     
-    with step_lock:
-        env.run_frame_with_buttons(actions_pressed)
+    # Use memory_lock to prevent race conditions with state reading during area transitions
+    with memory_lock:
+        with step_lock:
+            env.run_frame_with_buttons(actions_pressed)
+            
+            # SIMPLE FIX: Check for location name changes and invalidate cache
+            if hasattr(env, 'memory_reader') and env.memory_reader:
+                try:
+                    current_location = env.memory_reader.read_location()
+                    
+                    # Check if location changed (simple string comparison)
+                    if hasattr(env, '_last_location_check'):
+                        if current_location != env._last_location_check:
+                            logger.info(f"Location changed: {env._last_location_check} -> {current_location}")
+                            # Simple cache invalidation
+                            env.memory_reader.invalidate_map_cache()
+                            if hasattr(env, '_cached_state'):
+                                delattr(env, '_cached_state')
+                            if hasattr(env, '_cached_state_time'):
+                                delattr(env, '_cached_state_time')
+                    
+                    env._last_location_check = current_location
+                except Exception as e:
+                    logger.debug(f"Location check failed: {e}")
 
-        screenshot = env.get_screenshot()
-        if screenshot:
-            with obs_lock:
-                current_obs = np.array(screenshot)
+            screenshot = env.get_screenshot()
+            if screenshot:
+                with obs_lock:
+                    current_obs = np.array(screenshot)
 
 def update_display(manual_mode=False):
     """Update the display with current game state"""
@@ -438,7 +461,7 @@ async def take_action(request: ActionRequest):
             if len(recent_button_presses) > 50:
                 recent_button_presses = recent_button_presses[-50:]
         
-        # Execute action
+        # Execute action - step_environment now handles its own memory locking
         step_environment(request.buttons)
         
         with step_lock:
@@ -486,14 +509,20 @@ async def get_comprehensive_state():
         raise HTTPException(status_code=400, detail="Emulator not initialized")
     
     try:
-        # Clear the comprehensive state cache to ensure fresh data
-        if hasattr(env, '_cached_state'):
-            delattr(env, '_cached_state')
-        if hasattr(env, '_cached_state_time'):
-            delattr(env, '_cached_state_time')
-        
-        # Get fresh comprehensive state from emulator
-        state = env.get_comprehensive_state()
+        # Use memory lock to prevent race conditions during area transitions
+        with memory_lock:
+            # Clear the comprehensive state cache to ensure fresh data
+            if hasattr(env, '_cached_state'):
+                delattr(env, '_cached_state')
+            if hasattr(env, '_cached_state_time'):
+                delattr(env, '_cached_state_time')
+            
+            # SIMPLE FIX: Basic area transition check  
+            if hasattr(env, 'memory_reader') and env.memory_reader:
+                env.memory_reader._check_area_transition()
+            
+            # Get fresh comprehensive state from emulator with thread safety
+            state = env.get_comprehensive_state()
         
         # Ensure game state is consistent with cached dialog state
         # Use the same cached dialog state as the status endpoint
@@ -981,12 +1010,9 @@ def main():
             env.load_state(args.load_state)
             print(f"Loaded state from: {args.load_state}")
             
-            # Force finding map buffer addresses after state load
-            if env.memory_reader:
-                if env.memory_reader._find_map_buffer_addresses():
-                    print(f"Map buffer initialized at 0x{env.memory_reader._map_buffer_addr:08X}")
-                else:
-                    print("Warning: Could not find map buffer addresses after state load")
+            # Map buffer should already be found by emulator.load_state()
+            if env.memory_reader and env.memory_reader._map_buffer_addr:
+                print(f"Map buffer already initialized at 0x{env.memory_reader._map_buffer_addr:08X}")
         except Exception as e:
             print(f"Failed to load state from {args.load_state}: {e}")
             print("Continuing with fresh game state...")

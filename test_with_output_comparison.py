@@ -95,9 +95,9 @@ class OutputComparisonTest:
             
             # Transition outside
             print("\n🚶 Phase 2: Transitioning outside")
-            for step in range(3):
+            for step in range(4):  # 4 steps should be enough to exit and move around
                 print(f"   Step {step+1}: Moving down...")
-                emu.press_buttons(['down'], hold_frames=15, release_frames=15)
+                emu.press_buttons(['down'], hold_frames=25, release_frames=25)  # Longer button press
                 time.sleep(0.1)
                 
                 # Save intermediate position
@@ -225,11 +225,11 @@ class OutputComparisonTest:
             
             # Transition outside
             print("\n🚶 Phase 2: Transitioning outside via server")
-            for step in range(3):
+            for step in range(4):  # 4 steps should be enough to exit and move around
                 print(f"   Step {step+1}: Sending DOWN action...")
                 response = requests.post(f"{server_url}/action", json={"buttons": ["down"]}, timeout=5)
-                time.sleep(0.1)
-                time.sleep(0.3)  # Processing delay
+                time.sleep(0.2)  # Increased processing delay
+                time.sleep(0.5)  # Longer delay between actions
                 
                 # Check intermediate state
                 response = requests.get(f"{server_url}/state", timeout=5)
