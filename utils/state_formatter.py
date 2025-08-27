@@ -8,6 +8,7 @@ Centralizes all state formatting logic for consistency across agent modules.
 
 import json
 import logging
+from utils.map_formatter import format_map_grid, format_map_for_llm, generate_dynamic_legend
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +304,7 @@ def _format_party_info(player_data, game_data):
     return context_parts
 
 def _format_map_info(map_info, include_debug_info=False):
-    """Format map and traversability information."""
+    """Format map and traversability information using unified formatter."""
     context_parts = []
     
     if not map_info:
@@ -314,138 +315,50 @@ def _format_map_info(map_info, include_debug_info=False):
     if 'current_map' in map_info:
         context_parts.append(f"Current Map: {map_info['current_map']}")
     
-    # Traversability information (key for navigation)
-    if 'traversability' in map_info and map_info['traversability']:
-        traversability = map_info['traversability']
-        metatile_info = map_info.get('metatile_info')
-        context_parts.append(f"\n--- FULL TRAVERSABILITY MAP ({len(traversability)}x{len(traversability[0])}) ---")
+    # Use raw tiles if available
+    if 'tiles' in map_info and map_info['tiles']:
+        raw_tiles = map_info['tiles']
+        # Get player facing direction from context
+        facing = "South"  # default
+        try:
+            # Try to get facing from state data
+            import inspect
+            frame = inspect.currentframe()
+            while frame:
+                if 'state_data' in frame.f_locals:
+                    facing = frame.f_locals['state_data'].get('player', {}).get('facing', 'South')
+                    break
+                frame = frame.f_back
+        except:
+            pass
         
-        # Find player position (center of the grid)
-        center_y = len(traversability) // 2
-        center_x = len(traversability[0]) // 2
+        # Get NPCs from map info
+        npcs = map_info.get('object_events', [])
         
-        # Try to get facing direction from map_info or global state
-        facing_arrow = "P "
-        facing = None
-        if 'player_facing' in map_info:
-            facing = map_info['player_facing']
-        if not facing and 'state' in map_info and 'player' in map_info['state']:
-            facing = map_info['state']['player'].get('facing')
-        import inspect
-        frame = inspect.currentframe()
-        while frame:
-            if 'state_data' in frame.f_locals:
-                facing = frame.f_locals['state_data'].get('player', {}).get('facing')
-                break
-            frame = frame.f_back
-        if facing:
-            facing_map = {"North": "↑ ", "South": "↓ ", "West": "← ", "East": "→ "}
-            facing_arrow = facing_map.get(facing, "P ")
+        # Get player coordinates for NPC positioning
+        player_coords = map_info.get('player_coords')
         
-        # Display the full traversability map
-        for y in range(len(traversability)):
-            row_str = ""
-            for x in range(len(traversability[y])):
-                if y == center_y and x == center_x:
-                    row_str += facing_arrow  # Player position with facing
+        # Use unified LLM formatter for consistency
+        map_display = format_map_for_llm(raw_tiles, facing, npcs, player_coords)
+        context_parts.append(f"\n--- FULL TRAVERSABILITY MAP ({len(raw_tiles)}x{len(raw_tiles[0])}) ---")
+        context_parts.append(map_display)
+        
+        # Add dynamic legend based on symbols in the map
+        grid = format_map_grid(raw_tiles, facing, npcs, player_coords)
+        legend = generate_dynamic_legend(grid)
+        context_parts.append(f"\n{legend}")
+        
+        # Add NPC information if present
+        if npcs:
+            context_parts.append(f"\n--- NPCs/TRAINERS ({len(npcs)} found) ---")
+            for npc in npcs:
+                npc_info = f"NPC {npc['id']}: "
+                if npc.get('trainer_type', 0) > 0:
+                    npc_info += f"Trainer at ({npc['current_x']}, {npc['current_y']})"
                 else:
-                    cell = str(traversability[y][x])
-                    # Try to get jump ledge direction from metatile_info if cell is 'J'
-                    if cell == "J" and metatile_info and y < len(metatile_info) and x < len(metatile_info[y]):
-                        behavior = metatile_info[y][x].get('behavior', '').upper()
-                        if "JUMP_EAST" in behavior:
-                            row_str += "→ "
-                        elif "JUMP_WEST" in behavior:
-                            row_str += "← "
-                        elif "JUMP_NORTH" in behavior:
-                            row_str += "↑ "
-                        elif "JUMP_SOUTH" in behavior:
-                            row_str += "↓ "
-                        elif "JUMP_NORTHEAST" in behavior:
-                            row_str += "↗ "
-                        elif "JUMP_NORTHWEST" in behavior:
-                            row_str += "↖ "
-                        elif "JUMP_SOUTHEAST" in behavior:
-                            row_str += "↘ "
-                        elif "JUMP_SOUTHWEST" in behavior:
-                            row_str += "↙ "
-                        else:
-                            row_str += "J "
-                    elif cell == "J":
-                        row_str += "J "
-                    elif cell == "0":
-                        row_str += "# "  # Blocked
-                    elif cell == ".":
-                        row_str += ". "  # Normal
-                    elif "TALL" in cell:
-                        row_str += "~ "  # Tall grass
-                    elif "WATER" in cell:
-                        row_str += "W "  # Water
-                    elif "JUMP" in cell:
-                        # Show jump direction
-                        if "JUMP_EAST" in cell:
-                            row_str += "→ "  # Jump east
-                        elif "JUMP_WEST" in cell:
-                            row_str += "← "  # Jump west
-                        elif "JUMP_NORTH" in cell:
-                            row_str += "↑ "  # Jump north
-                        elif "JUMP_SOUTH" in cell:
-                            row_str += "↓ "  # Jump south
-                        elif "JUMP_NORTHEAST" in cell:
-                            row_str += "↗ "  # Jump northeast
-                        elif "JUMP_NORTHWEST" in cell:
-                            row_str += "↖ "  # Jump northwest
-                        elif "JUMP_SOUTHEAST" in cell:
-                            row_str += "↘ "  # Jump southeast
-                        elif "JUMP_SOUTHWEST" in cell:
-                            row_str += "↙ "  # Jump southwest
-                        else:
-                            row_str += "J "  # Generic jump
-                    else:
-                        # For other terrain types, use first letter
-                        row_str += f"{cell[0] if cell else '?'} "
-            context_parts.append(row_str.rstrip())
-        
-        context_parts.append("\nLegend: ↑↓←→=Player (facing direction), .=Normal path, #=Blocked, ~=Tall grass, W=Water, J=Jump ledge, →←↑↓↗↖↘↙=Jump ledge directions")
-        
-        # Simple terrain summary (just key info)
-        terrain_types = set()
-        for row in traversability:
-            for cell in row:
-                cell_str = str(cell)
-                if cell_str != "0" and cell_str != ".":
-                    terrain_types.add(cell_str)
-        
-        if terrain_types:
-            special_terrain = []
-            for terrain in sorted(terrain_types):
-                if "TALL" in terrain:
-                    special_terrain.append("Tall grass (wild pokemon)")
-                elif "WATER" in terrain:
-                    special_terrain.append("Water (may need Surf)")
-                elif "JUMP" in terrain:
-                    # Show specific jump directions
-                    if "JUMP_EAST" in terrain:
-                        special_terrain.append("Jump ledge (→ East)")
-                    elif "JUMP_WEST" in terrain:
-                        special_terrain.append("Jump ledge (← West)")
-                    elif "JUMP_NORTH" in terrain:
-                        special_terrain.append("Jump ledge (↑ North)")
-                    elif "JUMP_SOUTH" in terrain:
-                        special_terrain.append("Jump ledge (↓ South)")
-                    elif "JUMP_NORTHEAST" in terrain:
-                        special_terrain.append("Jump ledge (↗ Northeast)")
-                    elif "JUMP_NORTHWEST" in terrain:
-                        special_terrain.append("Jump ledge (↖ Northwest)")
-                    elif "JUMP_SOUTHEAST" in terrain:
-                        special_terrain.append("Jump ledge (↘ Southeast)")
-                    elif "JUMP_SOUTHWEST" in terrain:
-                        special_terrain.append("Jump ledge (↙ Southwest)")
-                    else:
-                        special_terrain.append("Jump ledges")
-                else:
-                    special_terrain.append(terrain)
-            context_parts.append("Special terrain: " + ", ".join(special_terrain))
+                    npc_info += f"NPC at ({npc['current_x']}, {npc['current_y']})"
+                context_parts.append(npc_info)
+    
     return context_parts
 
 def _format_game_state(game_data):

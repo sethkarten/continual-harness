@@ -83,6 +83,11 @@ class MemoryAddresses:
     SAVE_BLOCK1_PTR = 0x03005D8C
     SAVE_BLOCK2_PTR = 0x03005D90
     
+    # Object Event addresses (NPCs/trainers)
+    OBJECT_EVENTS_COUNT = 16  # Max NPCs per map
+    OBJECT_EVENT_SIZE = 68    # Size of each ObjectEvent struct in memory (larger than saved version)
+    # gObjectEvents is at 0x02037230 for active map objects
+    
     # Battle addresses
     BATTLE_TYPE = 0x02023E82
     BATTLE_OUTCOME = 0x02023E84
@@ -219,6 +224,9 @@ class PokemonEmeraldReader:
 
     def _read_u16(self, address: int):
         return int.from_bytes(self.read_memory(address, 2), byteorder='little', signed=False)
+    
+    def _read_s16(self, address: int):
+        return int.from_bytes(self.read_memory(address, 2), byteorder='little', signed=True)
 
     def _read_u32(self, address: int):
         return int.from_bytes(self.read_memory(address, 4), byteorder='little', signed=False)
@@ -716,7 +724,7 @@ class PokemonEmeraldReader:
             
             if base_address == 0:
                 logger.warning("Could not read savestate object pointer")
-                return "South"
+                return "Unknown direction"
             
             # Read facing direction from the savestate object
             facing_value = self._read_u8(base_address + self.addresses.SAVESTATE_PLAYER_FACING_OFFSET)
@@ -727,10 +735,10 @@ class PokemonEmeraldReader:
                 return directions[facing_value]
             else:
                 logger.warning(f"Invalid facing direction value: {facing_value}")
-                return "South"
+                return "Unknown direction"
         except Exception as e:
             logger.warning(f"Failed to read player facing direction: {e}")
-            return "South"
+            return "Unknown direction"
 
     def read_location(self) -> str:
         """Read current location"""
@@ -1444,6 +1452,8 @@ class PokemonEmeraldReader:
         }
         
         try:
+            # Map tiles - read first
+            state = self.read_map(state)
             # Player information
             coords = self.read_coordinates()
             if coords:
@@ -1518,131 +1528,104 @@ class PokemonEmeraldReader:
                 logger.info(f"Final state party: {state['player']['party']}")
             else:
                 logger.warning("No Pokemon found in party")
-            
-            # Map tiles - use standard radius 7 to match direct emulator ground truth
-            tiles = self.read_map_around_player(radius=7)
-            if tiles:
-                # DEBUG: Print tile data before processing for HTTP API
-                total_tiles = sum(len(row) for row in tiles)
-                unknown_count = 0
-                corruption_count = 0
-                for row in tiles:
-                    for tile in row:
-                        if len(tile) >= 2:
-                            behavior = tile[1]
-                            if isinstance(behavior, int):
-                                if behavior == 0:
-                                    unknown_count += 1
-                                elif behavior == 134:  # Indoor element corruption
-                                    corruption_count += 1
-                
-                unknown_ratio = unknown_count / total_tiles if total_tiles > 0 else 0
-                logger.info(f"📊 PRE-PROCESSING TILES: {unknown_ratio:.1%} unknown ({unknown_count}/{total_tiles}), {corruption_count} corrupted")
-                
-                state["map"]["tiles"] = tiles
-                
-                # Process tiles for enhanced information
-                tile_names = []
-                metatile_behaviors = []
-                metatile_info = []
-                traversability_map = []
-                
-                for row in tiles:
-                    row_names = []
-                    row_behaviors = []
-                    row_info = []
-                    traversability_row = []
-                    
-                    for tile_data in row:
-                        if len(tile_data) >= 4:
-                            tile_id, behavior, collision, elevation = tile_data
-                        elif len(tile_data) >= 2:
-                            tile_id, behavior = tile_data[:2]
-                            collision = 0
-                            elevation = 0
-                        else:
-                            tile_id = tile_data[0] if tile_data else 0
-                            behavior = None
-                            collision = 0
-                            elevation = 0
-                        
-                        # Tile name
-                        tile_name = f"Tile_{tile_id:04X}"
-                        if behavior is not None and hasattr(behavior, 'name'):
-                            tile_name += f"({behavior.name})"
-                        row_names.append(tile_name)
-                        
-                        # Behavior name
-                        behavior_name = behavior.name if behavior is not None and hasattr(behavior, 'name') else "UNKNOWN"
-                        row_behaviors.append(behavior_name)
-                        
-                        # Detailed tile info
-                        tile_info = {
-                            "id": tile_id,
-                            "behavior": behavior_name,
-                            "collision": collision,
-                            "elevation": elevation,
-                            "passable": collision == 0,
-                            "encounter_possible": self._is_encounter_tile(behavior),
-                            "surfable": self._is_surfable_tile(behavior)
-                        }
-                        row_info.append(tile_info)
-                        
-                        # Traversability
-                        if behavior_name == "NORMAL":
-                            traversability_row.append("." if collision == 0 else "#")
-                        elif "TALL_GRASS" in behavior_name:
-                            traversability_row.append("~")
-                        elif "WATER" in behavior_name:
-                            traversability_row.append("W")
-                        elif "DOOR" in behavior_name:
-                            traversability_row.append("D")
-                        elif "JUMP" in behavior_name:
-                            # Show jump direction
-                            if "JUMP_EAST" in behavior_name:
-                                traversability_row.append("→")
-                            elif "JUMP_WEST" in behavior_name:
-                                traversability_row.append("←")
-                            elif "JUMP_NORTH" in behavior_name:
-                                traversability_row.append("↑")
-                            elif "JUMP_SOUTH" in behavior_name:
-                                traversability_row.append("↓")
-                            elif "JUMP_NORTHEAST" in behavior_name:
-                                traversability_row.append("↗")
-                            elif "JUMP_NORTHWEST" in behavior_name:
-                                traversability_row.append("↖")
-                            elif "JUMP_SOUTHEAST" in behavior_name:
-                                traversability_row.append("↘")
-                            elif "JUMP_SOUTHWEST" in behavior_name:
-                                traversability_row.append("↙")
-                            else:
-                                traversability_row.append("J")
-                        elif "IMPASSABLE" in behavior_name or "SEALED" in behavior_name:
-                            traversability_row.append("#")  # Treat as blocked
-                        elif "INDOOR" in behavior_name:
-                            traversability_row.append(".")  # Treat as normal indoor tile
-                        elif "DECORATION" in behavior_name or "HOLDS" in behavior_name:
-                            traversability_row.append(".")  # Treat decorations as walkable
-                        else:
-                            # For other behaviors, use a more descriptive approach
-                            if collision > 0:
-                                traversability_row.append("#")  # Blocked
-                            else:
-                                traversability_row.append(".")  # Walkable
-                    
-                    tile_names.append(row_names)
-                    metatile_behaviors.append(row_behaviors)
-                    metatile_info.append(row_info)
-                    traversability_map.append(traversability_row)
-                
-                state["map"]["tile_names"] = tile_names
-                state["map"]["metatile_behaviors"] = metatile_behaviors
-                state["map"]["metatile_info"] = metatile_info
-                state["map"]["traversability"] = traversability_map
+        
                 
         except Exception as e:
             logger.warning(f"Failed to read comprehensive state: {e}")
         
+        return state
+    
+    def read_map(self, state): 
+        tiles = self.read_map_around_player(radius=7)
+        if tiles:
+            # DEBUG: Print tile data before processing for HTTP API
+            total_tiles = sum(len(row) for row in tiles)
+            unknown_count = 0
+            corruption_count = 0
+            for row in tiles:
+                for tile in row:
+                    if len(tile) >= 2:
+                        behavior = tile[1]
+                        if isinstance(behavior, int):
+                            if behavior == 0:
+                                unknown_count += 1
+                            elif behavior == 134:  # Indoor element corruption
+                                corruption_count += 1
+            
+            unknown_ratio = unknown_count / total_tiles if total_tiles > 0 else 0
+            logger.info(f"📊 PRE-PROCESSING TILES: {unknown_ratio:.1%} unknown ({unknown_count}/{total_tiles}), {corruption_count} corrupted")
+            
+            state["map"]["tiles"] = tiles
+            
+            # Process tiles for enhanced information (keep minimal processing here)
+            tile_names = []
+            metatile_behaviors = []
+            metatile_info = []
+            
+            for row in tiles:
+                row_names = []
+                row_behaviors = []
+                row_info = []
+                
+                for tile_data in row:
+                    if len(tile_data) >= 4:
+                        tile_id, behavior, collision, elevation = tile_data
+                    elif len(tile_data) >= 2:
+                        tile_id, behavior = tile_data[:2]
+                        collision = 0
+                        elevation = 0
+                    else:
+                        tile_id = tile_data[0] if tile_data else 0
+                        behavior = None
+                        collision = 0
+                        elevation = 0
+                    
+                    # Tile name
+                    tile_name = f"Tile_{tile_id:04X}"
+                    if behavior is not None and hasattr(behavior, 'name'):
+                        tile_name += f"({behavior.name})"
+                    row_names.append(tile_name)
+                    
+                    # Behavior name
+                    behavior_name = behavior.name if behavior is not None and hasattr(behavior, 'name') else "UNKNOWN"
+                    row_behaviors.append(behavior_name)
+                    
+                    # Detailed tile info
+                    tile_info = {
+                        "id": tile_id,
+                        "behavior": behavior_name,
+                        "collision": collision,
+                        "elevation": elevation,
+                        "passable": collision == 0,
+                        "encounter_possible": self._is_encounter_tile(behavior),
+                        "surfable": self._is_surfable_tile(behavior)
+                    }
+                    row_info.append(tile_info)
+                    
+                    # No traversability processing - handled by state_formatter
+                
+                tile_names.append(row_names)
+                metatile_behaviors.append(row_behaviors)
+                metatile_info.append(row_info)
+            
+            state["map"]["tile_names"] = tile_names
+            state["map"]["metatile_behaviors"] = metatile_behaviors
+            state["map"]["metatile_info"] = metatile_info
+            # traversability now generated by state_formatter from raw tiles
+            
+        # Add object events (NPCs/trainers)
+        object_events = self.read_object_events()
+        if object_events:
+            state["map"]["object_events"] = object_events
+            logger.info(f"📍 Found {len(object_events)} NPCs/trainers in current map")
+            
+            # Add player absolute coordinates for NPC positioning
+            player_coords = self.read_coordinates()
+            if player_coords:
+                state["map"]["player_coords"] = {'x': player_coords[0], 'y': player_coords[1]}
+        else:
+            state["map"]["object_events"] = []
+            
         return state
 
     def _is_encounter_tile(self, behavior) -> bool:
@@ -1913,3 +1896,359 @@ class PokemonEmeraldReader:
         except Exception as e:
             logger.warning(f"Failed to get game progress context: {e}")
             return {}
+    
+    def read_object_events(self):
+        """
+        Read NPC/trainer object events using a hybrid approach:
+        1. First try runtime gObjectEvents (for moving NPCs)
+        2. Fallback to SaveBlock1 coordinate scanning (for static NPCs)
+        
+        Returns:
+            list: List of object events with their current positions and data
+        """
+        try:
+            # Get player position 
+            player_coords = self.read_coordinates()
+            if not player_coords:
+                logger.warning("Could not read player coordinates for NPC search")
+                return []
+            
+            player_x, player_y = player_coords
+            object_events = []
+            
+            # Method 1: Try runtime gObjectEvents first (better for moving NPCs)
+            logger.debug("Trying runtime gObjectEvents method...")
+            runtime_npcs = self._read_runtime_object_events(player_x, player_y)
+            
+            # Method 2: Fallback to SaveBlock1 coordinate scanning if no runtime NPCs found
+            if not runtime_npcs:
+                logger.debug("No runtime NPCs found, falling back to SaveBlock1 scanning...")
+                saveblock_npcs = self._read_saveblock_object_events(player_x, player_y)
+                object_events.extend(saveblock_npcs)
+            else:
+                object_events.extend(runtime_npcs)
+            
+            logger.info(f"📍 Found {len(object_events)} NPCs/trainers near player at ({player_x}, {player_y})")
+            
+            return object_events
+            
+        except Exception as e:
+            logger.error(f"Failed to read object events: {e}")
+            return []
+    
+    def _read_runtime_object_events(self, player_x, player_y):
+        """
+        Try to read NPCs from runtime gObjectEvents memory.
+        Returns empty list if no valid NPCs found.
+        """
+        object_events = []
+        
+        try:
+            gobject_events_addr = 0x02037230
+            max_npcs = 16
+            
+            for i in range(max_npcs):
+                try:
+                    event_addr = gobject_events_addr + (i * 68)
+                    
+                    # Read active flag first
+                    active = self._read_u8(event_addr + 0x00)
+                    if active != 0xFF:
+                        continue
+                    
+                    # Read current runtime position
+                    current_x = self._read_s16(event_addr + 0x0C)
+                    current_y = self._read_s16(event_addr + 0x0E)
+                    
+                    # Skip if coordinates are obviously invalid
+                    if current_x < -50 or current_x > 200 or current_y < -50 or current_y > 200:
+                        continue
+                    if current_x == 1023 and current_y == 1023:  # Common uninitialized value
+                        continue
+                    
+                    # Only include NPCs within reasonable range of player
+                    distance = abs(current_x - player_x) + abs(current_y - player_y)
+                    if distance > 10:
+                        continue
+                    
+                    # Read additional NPC properties
+                    graphics_id = self._read_u8(event_addr + 0x03)
+                    movement_type = self._read_u8(event_addr + 0x04)
+                    trainer_type = self._read_u8(event_addr + 0x05)
+                    
+                    # Skip if all properties are clearly invalid
+                    if graphics_id == 255 and movement_type == 255:
+                        continue
+                    
+                    object_event = {
+                        'id': i,
+                        'obj_event_id': self._read_u8(event_addr + 0x01),
+                        'local_id': self._read_u8(event_addr + 0x02),
+                        'graphics_id': graphics_id,
+                        'movement_type': movement_type,
+                        'current_x': current_x,
+                        'current_y': current_y,
+                        'initial_x': self._read_s16(event_addr + 0x10),
+                        'initial_y': self._read_s16(event_addr + 0x12),
+                        'elevation': 0,
+                        'trainer_type': trainer_type,
+                        'active': 1,
+                        'memory_address': event_addr,
+                        'source': f"runtime_slot_{i}_dist_{distance}"
+                    }
+                    object_events.append(object_event)
+                    logger.debug(f"Runtime NPC {i}: ({current_x},{current_y}) graphics={graphics_id}")
+                    
+                except Exception as e:
+                    logger.debug(f"Failed to read runtime NPC slot {i}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.debug(f"Runtime NPC reading failed: {e}")
+            
+        return object_events
+    
+    def _read_saveblock_object_events(self, player_x, player_y):
+        """
+        Improved method: scan IWRAM for coordinate pairs near player with better filtering.
+        This finds runtime NPC positions, not just spawn positions.
+        """
+        object_events = []
+        
+        try:
+            # Scan specific IWRAM regions where NPCs are likely stored
+            scan_regions = [
+                (0x02025A00, 0x02026000, "IWRAM_NPCs_1"),  # Found NPCs here in memory scan
+                (0x02026000, 0x02027000, "IWRAM_NPCs_2"),  # Expanded to cover gap - includes 0x020266C8
+            ]
+            
+            all_coords = []
+            
+            # Search each region for coordinate pairs
+            for start_addr, end_addr, region_name in scan_regions:
+                try:
+                    for addr in range(start_addr, end_addr - 4, 2):
+                        try:
+                            x = self._read_s16(addr)
+                            y = self._read_s16(addr + 2)
+                            
+                            # Skip invalid coordinates
+                            if x < -10 or x > 100 or y < -10 or y > 100:
+                                continue
+                            
+                            # Check if near player (within reasonable range)
+                            distance = abs(x - player_x) + abs(y - player_y)
+                            if distance <= 5 and distance > 0:  # Exclude player position
+                                all_coords.append((x, y, addr, distance, region_name))
+                                
+                        except Exception:
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Error scanning {region_name}: {e}")
+                    continue
+            
+            # Filter out duplicates and obvious false positives
+            unique_coords = {}
+            for x, y, addr, distance, region in all_coords:
+                coord_key = (x, y)
+                
+                # Skip player position
+                if x == player_x and y == player_y:
+                    continue
+                
+                # Validate this looks like NPC data by checking surrounding memory
+                try:
+                    # Look at bytes around the coordinate pair
+                    context = self._read_bytes(addr - 8, 24)
+                    
+                    # Skip if this looks like map data or other non-NPC data
+                    # NPCs usually have reasonable graphics IDs (1-50) in surrounding bytes
+                    has_reasonable_graphics = any(1 <= b <= 50 for b in context[:8])
+                    has_reasonable_movement = any(0 <= b <= 10 for b in context[:8])
+                    
+                    # Skip if too many high values (likely map data)
+                    high_value_count = sum(1 for b in context[:12] if b > 100)
+                    if high_value_count > 4:
+                        continue
+                    
+                    # Skip if all zeros or all 0xFF
+                    if all(b == 0 for b in context[:12]) or all(b == 0xFF for b in context[:12]):
+                        continue
+                    
+                    confidence = 0.0
+                    if has_reasonable_graphics:
+                        confidence += 0.3
+                    if has_reasonable_movement:
+                        confidence += 0.3
+                    if distance == 1:  # Very close to player - high priority
+                        confidence += 0.6  # Increased from 0.4 to prioritize adjacent NPCs
+                    elif distance == 2:
+                        confidence += 0.3
+                        
+                    # Adjacent NPCs (distance 1) get lower threshold due to high importance
+                    min_confidence = 0.2 if distance == 1 else 0.4
+                    if confidence < min_confidence:
+                        continue
+                        
+                    if coord_key not in unique_coords or confidence > unique_coords[coord_key][4]:
+                        unique_coords[coord_key] = (x, y, addr, distance, confidence)
+                        
+                except Exception:
+                    continue
+            
+            # Sort by distance and create ObjectEvent structures
+            sorted_coords = sorted(unique_coords.values(), key=lambda x: x[3])
+            
+            for i, (x, y, addr, distance, confidence) in enumerate(sorted_coords[:3]):  # Max 3 NPCs
+                try:
+                    # Extract NPC properties from surrounding memory
+                    graphics_id, movement_type, trainer_type = self._extract_npc_properties(addr)
+                    
+                    object_event = {
+                        'id': i,
+                        'obj_event_id': i,
+                        'local_id': i,
+                        'graphics_id': graphics_id,
+                        'movement_type': movement_type,
+                        'current_x': x,
+                        'current_y': y,
+                        'initial_x': x,  # Best guess - may be current position
+                        'initial_y': y,
+                        'elevation': 0,
+                        'trainer_type': trainer_type,
+                        'active': 1,
+                        'memory_address': addr,
+                        'source': f"iwram_scan_dist_{distance}_conf_{confidence:.2f}"
+                    }
+                    object_events.append(object_event)
+                    logger.debug(f"IWRAM NPC {i}: ({x},{y}) distance={distance} confidence={confidence:.2f}")
+                    
+                except Exception as e:
+                    logger.debug(f"Failed to create IWRAM NPC {i}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.debug(f"IWRAM NPC scanning failed: {e}")
+            
+        return object_events
+    
+    def _validate_npc_candidate(self, addr, x, y, player_x, player_y):
+        """
+        Validate if a coordinate pair at a memory address is likely a real NPC.
+        
+        Args:
+            addr: Memory address of the coordinate pair
+            x, y: Coordinates found
+            player_x, player_y: Player coordinates
+            
+        Returns:
+            float: Confidence score (0.0 - 1.0) that this is a real NPC
+        """
+        confidence = 0.0
+        
+        try:
+            # Read context around the coordinates
+            context_bytes = self._read_bytes(addr - 8, 32)
+            
+            # Check for structured data patterns that suggest this is part of an ObjectEvent
+            
+            # 1. Look for reasonable values in typical ObjectEvent fields
+            # Check bytes before coordinates for graphics_id, movement_type etc.
+            if len(context_bytes) >= 16:
+                # Bytes before coordinates might contain NPC metadata
+                for offset in range(8):
+                    byte_val = context_bytes[offset]
+                    # Graphics IDs are usually 1-50, movement types 0-10
+                    if 1 <= byte_val <= 50:
+                        confidence += 0.15
+                    elif 0 <= byte_val <= 10:
+                        confidence += 0.1
+            
+            # 2. Check bytes after coordinates for continuation of structure
+            if len(context_bytes) >= 24:
+                # Look for additional structured data after coordinates
+                post_coord_bytes = context_bytes[16:24]
+                non_zero_count = sum(1 for b in post_coord_bytes if b != 0)
+                if non_zero_count > 2:  # Some non-zero data suggests structure
+                    confidence += 0.2
+            
+            # 3. Distance from player - closer NPCs are more likely to be real
+            distance = abs(x - player_x) + abs(y - player_y)
+            if distance == 1:
+                confidence += 0.3  # Very close NPCs most likely
+            elif distance == 2:
+                confidence += 0.2
+            elif distance <= 4:
+                confidence += 0.1
+            
+            # 4. Check for patterns that suggest this is NOT an NPC
+            # Coordinates that are exact multiples might be map data, not NPCs
+            if x % 8 == 0 and y % 8 == 0:
+                confidence -= 0.2
+                
+            # All zero context suggests empty/unused memory
+            zero_count = sum(1 for b in context_bytes if b == 0)
+            if zero_count > len(context_bytes) * 0.8:  # 80%+ zeros
+                confidence -= 0.3
+            
+            # All 0xFF suggests uninitialized/invalid data
+            ff_count = sum(1 for b in context_bytes if b == 0xFF)
+            if ff_count > len(context_bytes) * 0.6:  # 60%+ 0xFF
+                confidence -= 0.4
+            
+        except Exception:
+            # If we can't read context, lower confidence
+            confidence = max(0.0, confidence - 0.2)
+        
+        return max(0.0, min(1.0, confidence))
+    
+    def _extract_npc_properties(self, addr):
+        """
+        Extract NPC properties (graphics_id, movement_type, trainer_type) from memory context.
+        
+        Args:
+            addr: Memory address where coordinates were found
+            
+        Returns:
+            tuple: (graphics_id, movement_type, trainer_type)
+        """
+        try:
+            # Read context around the coordinate pair
+            context_bytes = self._read_bytes(addr - 12, 24)
+            
+            # Try different interpretations of the structure
+            # We'll look for reasonable values in typical positions
+            
+            graphics_id = 1  # Default to visible NPC
+            movement_type = 0  # Default to stationary
+            trainer_type = 0  # Default to regular NPC
+            
+            if len(context_bytes) >= 24:
+                # Look for graphics_id in bytes before coordinates
+                for offset in range(8):
+                    byte_val = context_bytes[offset]
+                    if 1 <= byte_val <= 50:  # Reasonable graphics_id range
+                        graphics_id = byte_val
+                        break
+                
+                # Look for movement_type 
+                for offset in range(1, 9):
+                    byte_val = context_bytes[offset]
+                    if 0 <= byte_val <= 10:  # Reasonable movement_type range
+                        movement_type = byte_val
+                        break
+                
+                # Look for trainer_type in bytes after coordinates
+                for offset in range(16, 24):
+                    if offset < len(context_bytes):
+                        byte_val = context_bytes[offset]
+                        if 1 <= byte_val <= 5:  # Common trainer type range
+                            trainer_type = byte_val
+                            break
+            
+            return graphics_id, movement_type, trainer_type
+            
+        except Exception:
+            # If we can't extract properties, return defaults
+            return 1, 0, 0
