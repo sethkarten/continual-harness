@@ -8,9 +8,137 @@ Centralizes all state formatting logic for consistency across agent modules.
 
 import json
 import logging
+import numpy as np
+from PIL import Image
 from utils.map_formatter import format_map_grid, format_map_for_llm, generate_dynamic_legend
 
 logger = logging.getLogger(__name__)
+
+def detect_dialogue_on_frame(screenshot_base64=None, frame_array=None):
+    """
+    Detect if dialogue is visible on the game frame by analyzing the lower portion.
+    
+    Args:
+        screenshot_base64: Base64 encoded screenshot string
+        frame_array: numpy array of the frame (240x160 for GBA)
+        
+    Returns:
+        dict: {
+            'has_dialogue': bool,
+            'confidence': float (0-1),
+            'reason': str
+        }
+    """
+    try:
+        # Convert base64 to image if needed
+        if screenshot_base64 and not frame_array:
+            import base64
+            import io
+            image_data = base64.b64decode(screenshot_base64)
+            image = Image.open(io.BytesIO(image_data))
+            frame_array = np.array(image)
+        
+        if frame_array is None:
+            return {'has_dialogue': False, 'confidence': 0.0, 'reason': 'No frame data'}
+        
+        # GBA resolution is 240x160
+        height, width = frame_array.shape[:2]
+        
+        # Dialogue typically appears in the bottom 40-50 pixels
+        dialogue_region = frame_array[height-50:, :]  # Bottom 50 pixels
+        
+        # Convert to grayscale for analysis
+        if len(dialogue_region.shape) == 3:
+            # Convert RGB to grayscale
+            gray = np.dot(dialogue_region[...,:3], [0.299, 0.587, 0.114]).astype(np.uint8)
+        else:
+            gray = dialogue_region
+        
+        # Dialogue boxes in Pokemon are typically:
+        # 1. Have a distinct blue/white color scheme
+        # 2. Have high contrast text on background
+        # 3. Have consistent borders
+        
+        # Check for dialogue box characteristics
+        # 1. Check for blue dialogue box (typical color range)
+        if len(dialogue_region.shape) == 3:
+            # Blue dialogue box detection (Pokemon dialogue boxes are often blue-ish)
+            blue_mask = (
+                (dialogue_region[:,:,2] > 100) &  # High blue channel
+                (dialogue_region[:,:,2] > dialogue_region[:,:,0] * 1.2) &  # More blue than red
+                (dialogue_region[:,:,2] > dialogue_region[:,:,1] * 1.2)    # More blue than green
+            )
+            blue_percentage = np.sum(blue_mask) / blue_mask.size
+            
+            # White/light regions (text areas)
+            white_mask = (
+                (dialogue_region[:,:,0] > 200) &
+                (dialogue_region[:,:,1] > 200) &
+                (dialogue_region[:,:,2] > 200)
+            )
+            white_percentage = np.sum(white_mask) / white_mask.size
+        else:
+            blue_percentage = 0
+            white_percentage = 0
+        
+        # 2. Check for high contrast (text on background)
+        std_dev = np.std(gray)
+        
+        # 3. Check for horizontal lines (dialogue box borders)
+        # Detect horizontal edges
+        vertical_diff = np.abs(np.diff(gray, axis=0))
+        horizontal_edges = np.sum(vertical_diff > 50) / vertical_diff.size
+        
+        # 4. Check for consistent patterns (not random pixels)
+        # Calculate local variance to detect structured content
+        local_variance = []
+        for i in range(0, gray.shape[0]-5, 5):
+            for j in range(0, gray.shape[1]-5, 5):
+                patch = gray[i:i+5, j:j+5]
+                local_variance.append(np.var(patch))
+        
+        avg_local_variance = np.mean(local_variance) if local_variance else 0
+        
+        # Scoring system
+        confidence = 0.0
+        reasons = []
+        
+        # Blue/white dialogue box detection
+        if blue_percentage > 0.3:
+            confidence += 0.3
+            reasons.append("blue dialogue box detected")
+        
+        if white_percentage > 0.1 and white_percentage < 0.5:
+            confidence += 0.2
+            reasons.append("text area detected")
+        
+        # High contrast for text
+        if std_dev > 30 and std_dev < 100:
+            confidence += 0.2
+            reasons.append("text contrast detected")
+        
+        # Horizontal edges (box borders)
+        if horizontal_edges > 0.01 and horizontal_edges < 0.1:
+            confidence += 0.2
+            reasons.append("dialogue box borders detected")
+        
+        # Structured content (not random)
+        if avg_local_variance > 100 and avg_local_variance < 2000:
+            confidence += 0.1
+            reasons.append("structured content")
+        
+        # Determine if dialogue is present
+        has_dialogue = confidence >= 0.5
+        
+        return {
+            'has_dialogue': has_dialogue,
+            'confidence': min(confidence, 1.0),
+            'reason': ', '.join(reasons) if reasons else 'no dialogue indicators'
+        }
+        
+    except Exception as e:
+        logger.warning(f"Failed to detect dialogue on frame: {e}")
+        return {'has_dialogue': False, 'confidence': 0.0, 'reason': f'error: {e}'}
 
 def _analyze_npc_terrain(npc, raw_tiles, player_coords):
     """
@@ -210,7 +338,9 @@ def _format_state_summary(state_data):
     
     # Dialog text (if any)
     dialog_text = game_data.get('dialog_text')
-    if dialog_text:
+    dialogue_detected = game_data.get('dialogue_detected', {})
+    if dialog_text and dialogue_detected.get('has_dialogue', True):
+        # Only show dialogue if frame detection confirms it (or if detection wasn't run)
         # Truncate dialog text to first 50 characters
         dialog_preview = dialog_text[:50].replace('\n', ' ').strip()
         if len(dialog_text) > 50:
@@ -462,6 +592,21 @@ def _format_game_state(game_data):
         if 'opponent_pokemon' in battle:
             opp_pkmn = battle['opponent_pokemon']
             context_parts.append(f"  Opponent: {opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')}) HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
+    
+    # Dialogue detection and validation
+    dialog_text = game_data.get('dialog_text')
+    dialogue_detected = game_data.get('dialogue_detected', {})
+    
+    if dialog_text:
+        if dialogue_detected.get('has_dialogue', True):
+            context_parts.append(f"\n--- DIALOGUE ---")
+            if dialogue_detected.get('confidence') is not None:
+                context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
+            context_parts.append(f"Text: {dialog_text}")
+        else:
+            # Dialogue text exists in memory but not visible on screen
+            context_parts.append(f"\n--- RESIDUAL TEXT (not visible) ---")
+            context_parts.append(f"Memory text: {dialog_text[:100]}...")
     
     if 'game_state' in game_data:
         context_parts.append(f"Game State: {game_data['game_state']}")
