@@ -17,10 +17,13 @@ from PIL import Image
 import argparse
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
+import asyncio
+import json
 
 from pokemon_env.emulator import EmeraldEmulator
 from pokemon_env.enums import MetatileBehavior
@@ -45,6 +48,9 @@ current_obs = None
 fps = 60
 agent_thinking = False
 last_agent_action = None
+agent_mode = False  # False = manual, True = agent
+agent_auto_enabled = False  # Auto agent actions
+last_game_state = None  # Cache for web interface
 
 # Pygame display
 screen_width = 480  # 240 * 2 (upscaled)
@@ -57,6 +63,9 @@ clock = None
 obs_lock = threading.Lock()
 step_lock = threading.Lock()
 agent_lock = threading.Lock()
+
+# WebSocket connections
+websocket_connections = set()
 
 # Button mapping for manual control
 button_map = {
@@ -195,6 +204,43 @@ class AgentModules:
             "model": self.model_name
         }
 
+async def broadcast_state_update():
+    """Broadcast current game state to all connected WebSocket clients"""
+    global last_game_state
+    
+    if not websocket_connections or not last_game_state:
+        return
+    
+    try:
+        message = json.dumps({
+            "type": "state_update",
+            "data": {
+                "screenshot": last_game_state.get("visual", {}).get("screenshot_base64", ""),
+                "player": last_game_state.get("player", {}),
+                "game": last_game_state.get("game", {}),
+                "map": last_game_state.get("map", {}).get("current_location", "Unknown"),
+                "agent_mode": agent_mode,
+                "agent_thinking": agent_thinking,
+                "last_action": last_agent_action,
+                "step": step_count,
+                "fps": fps
+            }
+        })
+        
+        # Send to all connected clients
+        disconnected = set()
+        for websocket in websocket_connections:
+            try:
+                await websocket.send_text(message)
+            except:
+                disconnected.add(websocket)
+        
+        # Remove disconnected clients
+        for ws in disconnected:
+            websocket_connections.discard(ws)
+    except Exception as e:
+        logger.error(f"Error broadcasting state: {e}")
+
 def signal_handler(signum, _frame):
     """Handle shutdown signals gracefully"""
     global running
@@ -281,6 +327,16 @@ def handle_input(manual_mode=True):
                 display_map()
             elif event.key == pygame.K_SPACE:  # Spacebar to trigger agent action
                 return True, ["AGENT_STEP"]
+            elif event.key == pygame.K_TAB:  # Tab to toggle agent/manual mode
+                global agent_mode
+                agent_mode = not agent_mode
+                mode_text = "AGENT" if agent_mode else "MANUAL"
+                print(f"🔄 Switched to {mode_text} mode")
+            elif event.key == pygame.K_a:  # 'A' key to toggle auto agent
+                global agent_auto_enabled
+                agent_auto_enabled = not agent_auto_enabled
+                auto_text = "ENABLED" if agent_auto_enabled else "DISABLED"
+                print(f"🤖 Auto agent {auto_text}")
             elif event.key == pygame.K_1:
                 if emulator:
                     save_file = "agent_direct_save.state"
@@ -314,9 +370,11 @@ def queue_agent_step():
 
 def background_emulator_loop():
     """Background 60 FPS emulator loop"""
-    global current_obs, last_agent_action, pending_agent_action, running, current_actions
+    global current_obs, last_agent_action, pending_agent_action, running, current_actions, last_game_state
     
     print("🎮 Starting 60 FPS background emulator loop...")
+    last_broadcast_time = 0
+    broadcast_interval = 1/10  # Broadcast at 10 FPS
     
     while running:
         if not emulator:
@@ -359,14 +417,52 @@ def background_emulator_loop():
             else:
                 print("❌ Agent not initialized")
         
+        # In agent mode, automatically let agent act
+        if agent_mode and not agent_step_needed and agent_modules and not agent_modules.thinking:
+            # Agent mode: automatically trigger agent action if no manual actions
+            if not actions_to_execute and int(time.time()) % 2 == 0 and int(time.time() * 10) % 10 == 0:  # Agent acts every 2 seconds
+                try:
+                    game_state = emulator.get_comprehensive_state()
+                    agent_action = agent_modules.process_game_state(game_state)
+                    
+                    if agent_action and "action" in agent_action:
+                        button_action = agent_action["action"]
+                        actions_to_execute = [button_action]
+                        last_agent_action = agent_action
+                        print(f"🤖 Auto agent chose: {button_action}")
+                except Exception as e:
+                    print(f"❌ Auto agent error: {e}")
+        
         # Run frame with actions (or no actions)
         emulator.run_frame_with_buttons(actions_to_execute)
         
-        # Update screenshot
+        # Update screenshot and cache game state
         screenshot = emulator.get_screenshot()
         if screenshot:
             with obs_lock:
                 current_obs = np.array(screenshot)
+        
+        # Cache game state and broadcast updates periodically
+        current_time = time.time()
+        if current_time - last_broadcast_time > broadcast_interval:
+            try:
+                # Get game state for caching and broadcasting
+                game_state = emulator.get_comprehensive_state()
+                last_game_state = game_state
+                
+                # Broadcast to WebSocket clients (run in thread)
+                if websocket_connections:
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        loop.run_until_complete(broadcast_state_update())
+                        loop.close()
+                    except Exception as e:
+                        logger.debug(f"Broadcast error: {e}")
+                
+                last_broadcast_time = current_time
+            except Exception as e:
+                logger.debug(f"State update error: {e}")
         
         # Run at 60 FPS (16.67ms per frame)
         time.sleep(1.0 / 60.0)
@@ -395,10 +491,13 @@ def update_display():
         
         # Draw info overlay
         if font:
+            mode_text = "AGENT" if agent_mode else "MANUAL"
+            auto_text = " (AUTO)" if agent_auto_enabled else ""
+            
             info_lines = [
-                f"Step: {step_count}",
+                f"Step: {step_count} | Mode: {mode_text}{auto_text}",
                 f"Controls: WASD/Arrows=Move, Z=A, X=B, Space=Agent Step",
-                f"Special: S=Screenshot, M=Map, 1=Save, 2=Load, Esc=Quit"
+                f"Special: Tab=Mode, A=Auto, S=Screenshot, M=Map, 1=Save, 2=Load, Esc=Quit"
             ]
             
             if agent_modules:
@@ -676,6 +775,51 @@ async def get_agent_status():
         "status": "initialized",
         **agent_modules.get_agent_status()
     }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time state updates"""
+    await websocket.accept()
+    websocket_connections.add(websocket)
+    print(f"WebSocket client connected. Total: {len(websocket_connections)}")
+    
+    try:
+        while True:
+            # Keep connection alive and listen for client messages
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        websocket_connections.discard(websocket)
+        print(f"WebSocket client disconnected. Remaining: {len(websocket_connections)}")
+
+@app.post("/toggle_mode")
+async def toggle_mode():
+    """Toggle between manual and agent mode"""
+    global agent_mode
+    agent_mode = not agent_mode
+    mode_text = "AGENT" if agent_mode else "MANUAL"
+    print(f"🔄 Mode switched to {mode_text} via API")
+    return {"mode": mode_text, "agent_mode": agent_mode}
+
+@app.post("/toggle_auto")
+async def toggle_auto():
+    """Toggle auto agent mode"""
+    global agent_auto_enabled
+    agent_auto_enabled = not agent_auto_enabled
+    auto_text = "ENABLED" if agent_auto_enabled else "DISABLED"
+    print(f"🤖 Auto agent {auto_text} via API")
+    return {"auto_enabled": agent_auto_enabled, "status": auto_text}
+
+@app.get("/")
+async def get_web_interface():
+    """Serve the web interface"""
+    try:
+        with open("server/stream.html", "r") as f:
+            html_content = f.read()
+        # Update WebSocket URL to connect to this server
+        html_content = html_content.replace("ws://localhost:8000/ws", f"ws://localhost:{8080}/ws")
+        return HTMLResponse(content=html_content)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Web interface not found</h1><p>Please ensure server/stream.html exists</p>")
 
 def main():
     """Main function"""
