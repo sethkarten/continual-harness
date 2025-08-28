@@ -23,7 +23,7 @@ class TestAgentDirectAPI:
     def test_global_state_initialized(self):
         """Test that global state variables are properly initialized"""
         import agent_direct
-        assert agent_direct.agent_mode == False  # Should start in manual mode
+        assert agent_direct.agent_mode == True   # Should start in agent mode by default
         assert agent_direct.agent_auto_enabled == False  # Should start with auto disabled
         assert isinstance(agent_direct.websocket_connections, set)
         assert len(agent_direct.websocket_connections) == 0  # Should start empty

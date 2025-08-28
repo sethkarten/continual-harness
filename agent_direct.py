@@ -48,7 +48,7 @@ current_obs = None
 fps = 60
 agent_thinking = False
 last_agent_action = None
-agent_mode = False  # False = manual, True = agent
+agent_mode = True   # True = agent (default), False = manual
 agent_auto_enabled = False  # Auto agent actions
 last_game_state = None  # Cache for web interface
 
@@ -628,9 +628,10 @@ def game_loop(manual_mode=True, agent_auto=False):
     """Main game loop - handles input and display while background loop runs emulator at 60 FPS"""
     global running, step_count
     
-    print("Starting Direct Agent game loop...")
+    mode_text = "AGENT" if agent_mode else "MANUAL"
+    print(f"Starting Direct Agent game loop in {mode_text} mode...")
     print("Controls: WASD/Arrows=Move, Z=A, X=B, Space=Agent Step")
-    print("Special: S=Screenshot, M=Show Map, 1=Save State, 2=Load State, Esc=Quit")
+    print("Special: Tab=Mode Toggle, A=Auto Toggle, S=Screenshot, M=Map, 1=Save, 2=Load, Esc=Quit")
     
     if agent_auto:
         print("Agent auto mode: Agent will act automatically every few seconds")
@@ -831,8 +832,21 @@ def main():
     parser.add_argument("--port", type=int, default=8000, help="Port for web interface")
     parser.add_argument("--no-display", action="store_true", help="Run without pygame display")
     parser.add_argument("--agent-auto", action="store_true", help="Agent acts automatically")
+    parser.add_argument("--manual-mode", action="store_true", help="Start in manual mode instead of agent mode")
     
     args = parser.parse_args()
+    
+    # Apply command line flags to global state
+    global agent_mode, agent_auto_enabled
+    if args.manual_mode:
+        agent_mode = False
+        print("🎮 Starting in MANUAL mode (--manual-mode flag)")
+    else:
+        print("🤖 Starting in AGENT mode (default)")
+        
+    if args.agent_auto:
+        agent_auto_enabled = True
+        print("⚡ Auto agent ENABLED (--agent-auto flag)")
     
     # Set up signal handlers
     signal.signal(signal.SIGINT, signal_handler)
