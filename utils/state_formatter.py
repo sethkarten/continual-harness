@@ -12,7 +12,73 @@ from utils.map_formatter import format_map_grid, format_map_for_llm, generate_dy
 
 logger = logging.getLogger(__name__)
 
-def format_state(state_data, format_type="summary", include_debug_info=False):
+def _analyze_npc_terrain(npc, raw_tiles, player_coords):
+    """
+    Analyze what terrain is underneath an NPC position.
+    
+    Args:
+        npc: NPC object with current_x, current_y coordinates
+        raw_tiles: 2D array of tile data
+        player_coords: Player coordinates for grid positioning
+        
+    Returns:
+        str: Description of terrain under NPC, or None if no notable terrain
+    """
+    if not raw_tiles or not player_coords:
+        return None
+    
+    try:
+        # Handle both tuple and dict formats for player_coords
+        if isinstance(player_coords, dict):
+            player_abs_x = player_coords.get('x', 0)
+            player_abs_y = player_coords.get('y', 0)
+        else:
+            player_abs_x, player_abs_y = player_coords
+        
+        # Ensure coordinates are integers
+        player_abs_x = int(player_abs_x) if player_abs_x is not None else 0
+        player_abs_y = int(player_abs_y) if player_abs_y is not None else 0
+        
+        # Get NPC absolute coordinates
+        npc_abs_x = int(npc.get('current_x', 0))
+        npc_abs_y = int(npc.get('current_y', 0))
+        
+        # Calculate offset from player position
+        center_y = len(raw_tiles) // 2
+        center_x = len(raw_tiles[0]) // 2
+        
+        # Calculate grid position
+        offset_x = npc_abs_x - player_abs_x
+        offset_y = npc_abs_y - player_abs_y
+        grid_x = center_x + offset_x
+        grid_y = center_y + offset_y
+        
+        # Check if NPC is within grid bounds
+        if 0 <= grid_y < len(raw_tiles) and 0 <= grid_x < len(raw_tiles[grid_y]):
+            tile = raw_tiles[grid_y][grid_x]
+            from utils.map_formatter import format_tile_to_symbol
+            symbol = format_tile_to_symbol(tile)
+            
+            # Check for important terrain types
+            if symbol == "D":
+                return "BLOCKING DOOR"
+            elif symbol == "S":
+                return "blocking stairs/warp"
+            elif symbol == "#":
+                return "on wall/blocked tile"
+            elif symbol in ["P", "T", "B", "C", "=", "t"]:
+                return f"on furniture ({symbol})"
+            elif symbol == "~":
+                return "in tall grass"
+            elif symbol == "W":
+                return "on water"
+            
+    except (ValueError, IndexError, TypeError) as e:
+        logger.debug(f"Failed to analyze NPC terrain: {e}")
+    
+    return None
+
+def format_state(state_data, format_type="summary", include_debug_info=False, include_npcs=True):
     """
     Format comprehensive state data into readable text.
     
@@ -20,6 +86,7 @@ def format_state(state_data, format_type="summary", include_debug_info=False):
         state_data (dict): The comprehensive state from /state endpoint
         format_type (str): "summary" for one-line summary, "detailed" for multi-line LLM format
         include_debug_info (bool): Whether to include extra debug information (for detailed format)
+        include_npcs (bool): Whether to include NPC information in the state
     
     Returns:
         str: Formatted state text
@@ -27,22 +94,23 @@ def format_state(state_data, format_type="summary", include_debug_info=False):
     if format_type == "summary":
         return _format_state_summary(state_data)
     elif format_type == "detailed":
-        return _format_state_detailed(state_data, include_debug_info)
+        return _format_state_detailed(state_data, include_debug_info, include_npcs)
     else:
         raise ValueError(f"Unknown format_type: {format_type}. Use 'summary' or 'detailed'")
 
-def format_state_for_llm(state_data, include_debug_info=False):
+def format_state_for_llm(state_data, include_debug_info=False, include_npcs=True):
     """
     Format comprehensive state data into a readable context for the VLM.
     
     Args:
         state_data (dict): The comprehensive state from /state endpoint
         include_debug_info (bool): Whether to include extra debug information
+        include_npcs (bool): Whether to include NPC information in the state
     
     Returns:
         str: Formatted state context for LLM prompts
     """
-    return format_state(state_data, format_type="detailed", include_debug_info=include_debug_info)
+    return format_state(state_data, format_type="detailed", include_debug_info=include_debug_info, include_npcs=include_npcs)
 
 def format_state_summary(state_data):
     """
@@ -159,7 +227,7 @@ def _format_state_summary(state_data):
     
     return " | ".join(summary_parts) if summary_parts else "No state data"
 
-def _format_state_detailed(state_data, include_debug_info=False):
+def _format_state_detailed(state_data, include_debug_info=False, include_npcs=True):
     """
     Internal function to create detailed multi-line state format for LLM prompts.
     """
@@ -195,7 +263,7 @@ def _format_state_detailed(state_data, include_debug_info=False):
     context_parts.extend(party_context)
 
     # Map/Location information with traversability
-    map_context = _format_map_info(state_data.get('map', {}), include_debug_info)
+    map_context = _format_map_info(state_data.get('map', {}), include_debug_info, include_npcs)
     context_parts.extend(map_context)
 
     # Game state information
@@ -303,7 +371,7 @@ def _format_party_info(player_data, game_data):
     
     return context_parts
 
-def _format_map_info(map_info, include_debug_info=False):
+def _format_map_info(map_info, include_debug_info=False, include_npcs=True):
     """Format map and traversability information using unified formatter."""
     context_parts = []
     
@@ -333,7 +401,7 @@ def _format_map_info(map_info, include_debug_info=False):
             pass
         
         # Get NPCs from map info
-        npcs = map_info.get('object_events', [])
+        npcs = map_info.get('object_events', []) if include_npcs else []
         
         # Get player coordinates for NPC positioning
         player_coords = map_info.get('player_coords')
@@ -349,14 +417,26 @@ def _format_map_info(map_info, include_debug_info=False):
         context_parts.append(f"\n{legend}")
         
         # Add NPC information if present
-        if npcs:
+        if include_npcs and npcs:
             context_parts.append(f"\n--- NPCs/TRAINERS ({len(npcs)} found) ---")
+            context_parts.append("NOTE: These are static NPC spawn positions. NPCs may have moved from these locations during walking animations.")
+            
+            # Analyze terrain under NPCs
             for npc in npcs:
+                npc_x = npc.get('current_x', 0)
+                npc_y = npc.get('current_y', 0)
                 npc_info = f"NPC {npc['id']}: "
+                
                 if npc.get('trainer_type', 0) > 0:
-                    npc_info += f"Trainer at ({npc['current_x']}, {npc['current_y']})"
+                    npc_info += f"Trainer at ({npc_x}, {npc_y})"
                 else:
-                    npc_info += f"NPC at ({npc['current_x']}, {npc['current_y']})"
+                    npc_info += f"NPC at ({npc_x}, {npc_y})"
+                
+                # Analyze terrain under NPC position
+                terrain_note = _analyze_npc_terrain(npc, raw_tiles, player_coords)
+                if terrain_note:
+                    npc_info += f" - {terrain_note}"
+                
                 context_parts.append(npc_info)
     
     return context_parts
