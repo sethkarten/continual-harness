@@ -363,44 +363,86 @@ def _format_state_detailed(state_data, include_debug_info=False, include_npcs=Tr
     """
     context_parts = []
     
-    # Player information (from both player and game sections)
-    context_parts.append("=== PLAYER INFO ===")
-    
-    # Check both player and game sections for player data
+    # Check both player and game sections for data
     player_data = state_data.get('player', {})
     game_data = state_data.get('game', {})
     
-    # Player name and basic info
-    if 'name' in player_data and player_data['name']:
-        context_parts.append(f"Player Name: {player_data['name']}")
+    # Check if we're in battle to determine formatting mode
+    is_in_battle = game_data.get('is_in_battle', False) or game_data.get('in_battle', False)
     
-    # Position information
-    position = _get_player_position(player_data)
-    if position:
-        context_parts.append(f"Position: X={position.get('x', 'unknown')}, Y={position.get('y', 'unknown')}")
-    
-    # Facing direction
-    if 'facing' in player_data and player_data['facing']:
-        context_parts.append(f"Facing: {player_data['facing']}")
-    
-    # Money (check both player and game sections)
-    money = player_data.get('money') or game_data.get('money')
-    if money is not None:
-        context_parts.append(f"Money: ${money}")
-    
-    # Pokemon Party (check both player and game sections)
-    party_context = _format_party_info(player_data, game_data)
-    context_parts.extend(party_context)
+    if is_in_battle:
+        # BATTLE MODE: Focus on battle-relevant information
+        context_parts.append("=== BATTLE MODE ===")
+        context_parts.append("Currently in battle - map and dialogue information hidden")
+        
+        # Battle information first
+        if 'battle_info' in game_data and game_data['battle_info']:
+            battle = game_data['battle_info']
+            context_parts.append("\n=== BATTLE STATUS ===")
+            
+            if 'player_pokemon' in battle:
+                player_pkmn = battle['player_pokemon']
+                context_parts.append(f"Your Pokemon: {player_pkmn.get('species', 'Unknown')} (Lv.{player_pkmn.get('level', '?')})")
+                context_parts.append(f"  HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
+                if player_pkmn.get('status') and player_pkmn['status'] != 'Normal':
+                    context_parts.append(f"  Status: {player_pkmn['status']}")
+                
+            if 'opponent_pokemon' in battle:
+                opp_pkmn = battle['opponent_pokemon']
+                context_parts.append(f"\nOpponent: {opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')})")
+                context_parts.append(f"  HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
+                if opp_pkmn.get('status') and opp_pkmn['status'] != 'Normal':
+                    context_parts.append(f"  Status: {opp_pkmn['status']}")
+        
+        # Party information (important for switching decisions)
+        context_parts.append("\n=== PARTY STATUS ===")
+        party_context = _format_party_info(player_data, game_data)
+        context_parts.extend(party_context)
+        
+        # Trainer info if available
+        if 'name' in player_data and player_data['name']:
+            context_parts.append(f"\nTrainer: {player_data['name']}")
+        
+        # Money/badges might be relevant
+        money = player_data.get('money') or game_data.get('money')
+        if money is not None:
+            context_parts.append(f"Money: ${money}")
+            
+    else:
+        # NORMAL MODE: Full state information
+        context_parts.append("=== PLAYER INFO ===")
+        
+        # Player name and basic info
+        if 'name' in player_data and player_data['name']:
+            context_parts.append(f"Player Name: {player_data['name']}")
+        
+        # Position information
+        position = _get_player_position(player_data)
+        if position:
+            context_parts.append(f"Position: X={position.get('x', 'unknown')}, Y={position.get('y', 'unknown')}")
+        
+        # Facing direction
+        if 'facing' in player_data and player_data['facing']:
+            context_parts.append(f"Facing: {player_data['facing']}")
+        
+        # Money (check both player and game sections)
+        money = player_data.get('money') or game_data.get('money')
+        if money is not None:
+            context_parts.append(f"Money: ${money}")
+        
+        # Pokemon Party (check both player and game sections)
+        party_context = _format_party_info(player_data, game_data)
+        context_parts.extend(party_context)
 
-    # Map/Location information with traversability
-    map_context = _format_map_info(state_data.get('map', {}), include_debug_info, include_npcs)
-    context_parts.extend(map_context)
+        # Map/Location information with traversability (NOT shown in battle)
+        map_context = _format_map_info(state_data.get('map', {}), include_debug_info, include_npcs)
+        context_parts.extend(map_context)
 
-    # Game state information
-    game_context = _format_game_state(game_data)
-    context_parts.extend(game_context)
+        # Game state information (including dialogue if not in battle)
+        game_context = _format_game_state(game_data)
+        context_parts.extend(game_context)
     
-    # Debug information if requested
+    # Debug information if requested (shown in both modes)
     if include_debug_info:
         debug_context = _format_debug_info(state_data)
         context_parts.extend(debug_context)
@@ -572,7 +614,7 @@ def _format_map_info(map_info, include_debug_info=False, include_npcs=True):
     return context_parts
 
 def _format_game_state(game_data):
-    """Format game state information."""
+    """Format game state information (for non-battle mode)."""
     context_parts = []
     
     if not game_data:
@@ -580,33 +622,26 @@ def _format_game_state(game_data):
     
     context_parts.append("\n=== GAME STATE ===")
     
-    if 'in_battle' in game_data:
-        context_parts.append(f"In Battle: {game_data['in_battle']}")
+    # Note: Battle info is handled separately in battle mode
+    # This is for showing game state when NOT in battle
     
-    if 'battle_info' in game_data and game_data['battle_info']:
-        battle = game_data['battle_info']
-        context_parts.append("Battle Information:")
-        if 'player_pokemon' in battle:
-            player_pkmn = battle['player_pokemon']
-            context_parts.append(f"  Your Pokemon: {player_pkmn.get('species', 'Unknown')} (Lv.{player_pkmn.get('level', '?')}) HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
-        if 'opponent_pokemon' in battle:
-            opp_pkmn = battle['opponent_pokemon']
-            context_parts.append(f"  Opponent: {opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')}) HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
+    # Dialogue detection and validation (only show when not in battle)
+    is_in_battle = game_data.get('is_in_battle', False) or game_data.get('in_battle', False)
     
-    # Dialogue detection and validation
-    dialog_text = game_data.get('dialog_text')
-    dialogue_detected = game_data.get('dialogue_detected', {})
-    
-    if dialog_text:
-        if dialogue_detected.get('has_dialogue', True):
-            context_parts.append(f"\n--- DIALOGUE ---")
-            if dialogue_detected.get('confidence') is not None:
-                context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
-            context_parts.append(f"Text: {dialog_text}")
-        else:
-            # Dialogue text exists in memory but not visible on screen
-            context_parts.append(f"\n--- RESIDUAL TEXT (not visible) ---")
-            context_parts.append(f"Memory text: {dialog_text[:100]}...")
+    if not is_in_battle:
+        dialog_text = game_data.get('dialog_text')
+        dialogue_detected = game_data.get('dialogue_detected', {})
+        
+        if dialog_text:
+            if dialogue_detected.get('has_dialogue', True):
+                context_parts.append(f"\n--- DIALOGUE ---")
+                if dialogue_detected.get('confidence') is not None:
+                    context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
+                context_parts.append(f"Text: {dialog_text}")
+            else:
+                # Dialogue text exists in memory but not visible on screen
+                context_parts.append(f"\n--- RESIDUAL TEXT (not visible) ---")
+                context_parts.append(f"Memory text: {dialog_text[:100]}...")
     
     if 'game_state' in game_data:
         context_parts.append(f"Game State: {game_data['game_state']}")
