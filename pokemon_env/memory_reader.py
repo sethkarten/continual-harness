@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import struct
 from typing import Optional, Dict, Any, List, Tuple
 import logging
+import time
 
 from mgba._pylib import ffi, lib
 
@@ -443,7 +444,6 @@ class PokemonEmeraldReader:
     def is_in_dialog(self) -> bool:
         """Check if currently in dialog state using timeout-based approach"""
         try:
-            import time
             current_time = time.time()
             
             # Special case: if we're in an after_dialog state, force return False
@@ -574,6 +574,13 @@ class PokemonEmeraldReader:
                 if self._last_map_bank is not None:  # Don't log on first run
                     logger.info(f"Area transition detected: ({self._last_map_bank}, {self._last_map_number}) -> ({current_map_bank}, {current_map_number})")
                     self.invalidate_map_cache()
+                    
+                    # Force re-scan of map buffer addresses after transition
+                    # Area transitions can invalidate memory addresses due to game state changes
+                    self._map_buffer_addr = None
+                    self._map_width = None 
+                    self._map_height = None
+                    logger.debug("Forcing map buffer re-scan after area transition")
                     
                     # Also invalidate emulator's comprehensive state cache if callback is set
                     if hasattr(self, '_emulator_cache_invalidator') and self._emulator_cache_invalidator:
@@ -1112,7 +1119,13 @@ class PokemonEmeraldReader:
         # Check for area transitions (re-enabled with minimal logic)
         location = self.read_location()
         position = self.read_coordinates()
-        self._check_area_transition()
+        transition_detected = self._check_area_transition()
+        
+        # If we just transitioned, add a small delay for game state to stabilize
+        # This addresses the frame-dependent timing issues mentioned in emerald_npc_decompilation
+        if transition_detected:
+            time.sleep(0.05)  # 50ms delay to let game scripts complete
+            logger.debug("Applied post-transition delay for game state stabilization")
         
         # Always ensure map buffer is found
         if not self._map_buffer_addr:
@@ -1122,6 +1135,45 @@ class PokemonEmeraldReader:
         
         # Read map data with simple validation and retry
         map_data = self._read_map_data_internal(radius)
+        
+        # Additional corruption detection: check for invalid map buffer data
+        if map_data and self._map_buffer_addr:
+            try:
+                # Verify buffer is still valid by re-reading dimensions
+                current_width = self._read_u32(self._map_buffer_addr - 8)
+                current_height = self._read_u32(self._map_buffer_addr - 4)
+                
+                # If dimensions changed significantly, buffer may be corrupted
+                if (abs(current_width - self._map_width) > 5 or 
+                    abs(current_height - self._map_height) > 5 or
+                    current_width <= 0 or current_height <= 0 or
+                    current_width > 1000 or current_height > 1000):
+                    
+                    # Rate limit corruption warnings to avoid spam
+                    current_time = time.time()
+                    if not hasattr(self, '_last_corruption_warning'):
+                        self._last_corruption_warning = 0
+                    
+                    if current_time - self._last_corruption_warning > 5.0:  # Max 1 warning per 5 seconds
+                        logger.warning(f"Map buffer corruption detected: dimensions changed from {self._map_width}x{self._map_height} to {current_width}x{current_height}")
+                        self._last_corruption_warning = current_time
+                    else:
+                        logger.debug(f"Map buffer corruption (suppressed): {self._map_width}x{self._map_height} -> {current_width}x{current_height}")
+                    
+                    self._map_buffer_addr = None
+                    self._map_width = None
+                    self._map_height = None
+                    
+                    # Try to recover by re-finding buffer
+                    if self._find_map_buffer_addresses():
+                        logger.debug("Recovered from map buffer corruption")
+                        map_data = self._read_map_data_internal(radius)
+                    else:
+                        logger.error("Failed to recover from map buffer corruption")
+                        return []
+            except Exception as e:
+                logger.debug(f"Error checking buffer validity: {e}")
+                # Don't fail completely on validation errors
         
         # Quick validation: check for too many unknown tiles (only for outdoor areas)
         if map_data and len(map_data) > 0:
@@ -1194,7 +1246,6 @@ class PokemonEmeraldReader:
                     logger.info(f"Invalidating cache and retrying... (attempt {attempt + 2}/{max_retries})")
                     self.invalidate_map_cache()
                     # Force re-finding map buffer addresses with timeout
-                    import time
                     start_time = time.time()
                     if not self._find_map_buffer_addresses():
                         logger.warning("Failed to re-find map buffer addresses during retry")
