@@ -54,7 +54,7 @@ def format_tile_to_symbol(tile):
     elif "TALL_GRASS" in behavior_name:
         return "~"
     elif "COMPUTER" in behavior_name or "PC" in behavior_name:
-        return "P"  # PC/Computer
+        return "PC"  # PC/Computer
     elif "TELEVISION" in behavior_name or "TV" in behavior_name:
         return "T"  # Television
     elif "BOOKSHELF" in behavior_name or "SHELF" in behavior_name:
@@ -123,14 +123,8 @@ def format_map_grid(raw_tiles, player_facing="South", npcs=None, player_coords=N
     player_map_x = center_x  # Grid position (always 7,7 in 15x15)
     player_map_y = center_y
     
-    # Facing direction mapping
-    facing_symbols = {
-        "North": "↑", 
-        "South": "↓", 
-        "West": "←", 
-        "East": "→"
-    }
-    player_symbol = facing_symbols.get(player_facing, "P")
+    # Always use P for player instead of direction arrows
+    player_symbol = "P"
     
     # Create NPC position lookup (convert to relative grid coordinates)
     npc_positions = {}
@@ -253,17 +247,14 @@ def get_symbol_legend():
         dict: Symbol -> description mapping
     """
     return {
-        "↑": "Player facing North",
-        "↓": "Player facing South", 
-        "←": "Player facing West",
-        "→": "Player facing East",
+        "P": "Player",
         ".": "Walkable path",
         "#": "Wall/Blocked/Unknown",
         "D": "Door",
         "S": "Stairs/Warp",
         "W": "Water",
         "~": "Tall grass",
-        "P": "PC/Computer",
+        "PC": "PC/Computer",
         "T": "Television",
         "B": "Bookshelf", 
         "?": "Sign/Information",
@@ -306,11 +297,11 @@ def generate_dynamic_legend(grid):
     legend_lines = ["Legend:"]
     
     # Group symbols by category for better organization
-    player_symbols = ["↑", "↓", "←", "→"]
+    player_symbols = ["P"]
     terrain_symbols = [".", "#", "W", "~"] 
     structure_symbols = ["D", "S"]
     jump_symbols = ["J", "↗", "↖", "↘", "↙"]
-    furniture_symbols = ["P", "T", "B", "?", "F", "C", "=", "t"]
+    furniture_symbols = ["PC", "T", "B", "?", "F", "C", "=", "t"]
     npc_symbols = ["N", "@"]
     
     categories = [
