@@ -243,16 +243,37 @@ The server will start on `http://localhost:8000`. Open this URL in your browser 
 
 ### 2. Run the AI Agent
 
-Choose your VLM backend and run:
+#### Starting from the Beginning of the Game
+
+To start from the very beginning (new game):
 
 ```bash
-# OpenAI example
+# OpenAI example - starts from new game
 python agent.py --backend openai --model-name "gpt-4o"
 
-# Local model example  
-python agent.py --backend local --model-name "Qwen/Qwen2-VL-2B-Instruct"
+# Gemini example - starts from new game
+python agent.py --backend gemini --model-name "gemini-2.5-flash"
 
-# With additional options
+# Local model example - starts from new game
+python agent.py --backend local --model-name "Qwen/Qwen2-VL-2B-Instruct"
+```
+
+#### Starting from Saved States
+
+To load from a specific point in the game, the server needs to load the state:
+
+1. Stop the server if running (Ctrl+C)
+2. Copy your desired state file to the server directory:
+   ```bash
+   cp tests/states/torchic.state server/
+   ```
+3. Restart the server - it will automatically load the state
+4. Run the agent as normal
+
+#### Other Options
+
+```bash
+# With additional debugging options
 python agent.py \
     --backend openai \
     --model-name "gpt-4o" \
@@ -277,6 +298,31 @@ python agent.py \
 - **Better Performance**: Reduced latency between agent decisions and game actions
 
 ### Running Agent Direct
+
+#### Starting from the Beginning of the Game
+
+To start a fresh game from the very beginning (new game):
+
+```bash
+# Start from the very beginning of Pokémon Emerald
+python agent_direct.py --backend gemini --model-name gemini-2.5-flash --agent-auto
+```
+
+This will start from the initial "New Game" screen and play through the opening sequence.
+
+#### Starting from Saved States
+
+To load from a specific point in the game:
+
+```bash
+# Load from early game state (Littleroot Town)
+python agent_direct.py --load-state server/start.state --backend gemini --model-name gemini-2.5-flash
+
+# Load from specific test states
+python agent_direct.py --load-state tests/states/torchic.state --backend gemini --model-name gemini-2.5-flash
+```
+
+#### Other Options
 
 ```bash
 # Basic usage (starts in agent mode by default)

@@ -1,0 +1,31 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1756353573.7628074,
+      "first_completed": 1756353573.7628074
+    },
+    "HAS_PARTY": {
+      "completed": true,
+      "timestamp": 1756353573.7630975,
+      "first_completed": 1756353573.7630975
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1756353573.763335,
+      "first_completed": 1756353573.763335
+    },
+    "STARTER_CHOSEN": {
+      "completed": true,
+      "timestamp": 1756353573.7708771,
+      "first_completed": 1756353573.7708771
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1756353573.7714086,
+      "first_completed": 1756353573.7714086
+    }
+  },
+  "last_updated": 1756353573.771447,
+  "version": "1.0"
+}
