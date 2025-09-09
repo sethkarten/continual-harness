@@ -9,6 +9,7 @@ from mgba._pylib import ffi, lib
 from pokemon_env.emerald_utils import ADDRESSES, Pokemon_format, parse_pokemon, EmeraldCharmap
 from .enums import MetatileBehavior, StatusCondition, Tileset, PokemonType, PokemonSpecies, Move, Badge, MapLocation
 from .types import PokemonData
+from utils.ocr_dialogue import create_ocr_detector
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,10 @@ class PokemonEmeraldReader:
         # Warning rate limiter to prevent spam
         self._warning_cache = {}
         self._warning_rate_limit = 10.0  # Only show same warning once per 10 seconds
+        
+        # OCR-based dialogue detection fallback
+        self._ocr_detector = create_ocr_detector()
+        self._ocr_enabled = self._ocr_detector is not None
         
         # Track A button presses to prevent dialogue cache repopulation
         self._a_button_pressed_time = 0.0
@@ -1831,8 +1836,8 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to get exact behavior for metatile {metatile_id}: {e}")
             return MetatileBehavior.NORMAL
 
-    def get_comprehensive_state(self) -> Dict[str, Any]:
-        """Get comprehensive game state"""
+    def get_comprehensive_state(self, screenshot=None) -> Dict[str, Any]:
+        """Get comprehensive game state with optional screenshot for OCR fallback"""
         logger.info("Starting comprehensive state reading")
         state = {
             "visual": {"screenshot": None, "resolution": [240, 160]},
@@ -1889,13 +1894,13 @@ class PokemonEmeraldReader:
                 if battle_details:
                     state["game"]["battle"] = battle_details
             
-            # Dialog text - always try to read it to see if there's any text in buffers
-            dialog_text = self.read_dialog()
+            # Dialog text - use OCR fallback if screenshot available
+            dialog_text = self.read_dialog_with_ocr_fallback(screenshot)
             if dialog_text:
                 state["game"]["dialog_text"] = dialog_text
                 logger.info(f"Found dialog text: {dialog_text[:100]}...")
             else:
-                logger.debug("No dialog text found in memory buffers")
+                logger.debug("No dialog text found in memory buffers or OCR")
             
             # Dialogue detection result - determines if dialogue should be shown to LLM
             dialogue_active = self.is_in_dialog()
@@ -2218,6 +2223,306 @@ class PokemonEmeraldReader:
         except Exception as e:
             logger.warning(f"Failed to read dialog: {e}")
             return ""
+
+    def read_dialog_with_ocr_fallback(self, screenshot=None) -> str:
+        """
+        Read dialog text with smart OCR validation to detect stale memory.
+        
+        Preference order:
+        1. Both memory AND OCR detect text -> Use memory (most accurate)
+        2. Only OCR detects text -> Use OCR (memory failed)  
+        3. Only memory detects text -> Suppress (likely stale/buggy memory)
+        
+        Args:
+            screenshot: PIL Image of current game screen (optional)
+            
+        Returns:
+            Dialog text using smart preference logic
+        """
+        # First try memory-based detection with enhanced filtering
+        raw_memory_text = self.read_dialog()
+        
+        # Apply residual text filtering like the enhanced dialogue detection does
+        memory_text = ""
+        if raw_memory_text:
+            cleaned_text = raw_memory_text.strip().lower()
+            residual_indicators = [
+                "got away safely", "fled from", "escaped", "ran away",
+                "fainted", "defeated", "victory", "experience points", 
+                "gained", "grew to", "learned"
+            ]
+            if any(indicator in cleaned_text for indicator in residual_indicators):
+                logger.debug(f"OCR fallback: Filtering out residual battle text: '{raw_memory_text[:30]}...'")
+                memory_text = ""  # Treat as no memory text
+            else:
+                memory_text = raw_memory_text
+        
+        # If we have OCR available and a screenshot, use smart validation
+        if self._ocr_enabled and screenshot is not None:
+            try:
+                ocr_text = self._ocr_detector.detect_dialogue_from_screenshot(screenshot)
+                
+                # Normalize for comparison (strip whitespace, handle None)
+                memory_clean = memory_text.strip() if memory_text else ""
+                ocr_clean = ocr_text.strip() if ocr_text else ""
+                
+                # Validate if OCR text is meaningful dialogue (not garbage like 'cL een aA')
+                ocr_is_meaningful = self._is_ocr_meaningful_dialogue(ocr_clean)
+                
+                # Case 1: Both memory and OCR found meaningful text
+                if memory_clean and ocr_clean and ocr_is_meaningful:
+                    logger.debug(f"Both memory and OCR detected text")
+                    logger.debug(f"Memory: '{memory_clean[:50]}...'")
+                    logger.debug(f"OCR: '{ocr_clean[:50]}...'")
+                    
+                    # Validate similarity to detect if memory is reasonable
+                    if self._texts_are_similar(memory_clean, ocr_clean):
+                        logger.debug("✅ Memory and OCR are similar - using memory (most accurate)")
+                        return memory_clean
+                    else:
+                        logger.debug("⚠️ Memory and OCR differ significantly - using memory but flagging")
+                        # Still use memory when both exist, but log the discrepancy
+                        return memory_clean
+                
+                # Case 2: Only OCR found meaningful text (memory failed/empty)
+                elif not memory_clean and ocr_clean and ocr_is_meaningful:
+                    logger.debug(f"Only OCR detected meaningful text - memory reading failed")
+                    logger.debug(f"Using OCR: '{ocr_clean[:50]}...'")
+                    return ocr_clean
+                
+                # Case 3: Only memory found text (OCR failed/empty/meaningless) 
+                elif memory_clean and (not ocr_clean or not ocr_is_meaningful):
+                    if not ocr_clean:
+                        logger.debug(f"Only memory detected text - OCR found nothing")
+                    elif not ocr_is_meaningful:
+                        logger.debug(f"Only memory detected text - OCR found meaningless noise: '{ocr_clean}'")
+                    logger.debug(f"Memory text: '{memory_clean[:50]}...'")
+                    logger.debug("🚨 SUPPRESSING: Memory-only detection (likely stale/buggy)")
+                    # This is the key fix - suppress memory-only detections as they're likely stale
+                    return ""
+                
+                # Case 4: Neither found text
+                else:
+                    logger.debug("Neither memory nor OCR detected dialogue text")
+                    return ""
+                    
+            except Exception as e:
+                logger.debug(f"OCR validation failed: {e}")
+                # Fall back to memory reading if OCR fails completely
+                return memory_text if memory_text else ""
+        
+        # If no OCR available, use memory reading as before
+        return memory_text if memory_text else ""
+    
+    def _texts_are_similar(self, text1: str, text2: str, threshold: float = 0.4) -> bool:
+        """
+        Check if two texts are reasonably similar (handles OCR differences)
+        
+        Args:
+            text1, text2: Texts to compare
+            threshold: Minimum similarity ratio (0.0-1.0)
+            
+        Returns:
+            True if texts are similar enough
+        """
+        if not text1 or not text2:
+            return False
+        
+        # Convert to lowercase and split into words
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if len(words1) == 0 or len(words2) == 0:
+            return False
+        
+        # Calculate Jaccard similarity (intersection over union)
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        similarity = len(intersection) / len(union) if len(union) > 0 else 0
+        
+        # Also check for substring matches (handles OCR character errors)
+        substring_matches = 0
+        for word1 in words1:
+            for word2 in words2:
+                if len(word1) >= 3 and len(word2) >= 3:
+                    if word1 in word2 or word2 in word1:
+                        substring_matches += 1
+                        break
+        
+        substring_similarity = substring_matches / max(len(words1), len(words2))
+        
+        # Use the higher of the two similarity measures
+        final_similarity = max(similarity, substring_similarity)
+        
+        logger.debug(f"Text similarity: {final_similarity:.2f} (threshold: {threshold})")
+        return final_similarity >= threshold
+    
+    def _is_ocr_meaningful_dialogue(self, ocr_text: str) -> bool:
+        """
+        Determine if OCR text represents meaningful dialogue vs. random noise.
+        
+        Args:
+            ocr_text: Text detected by OCR
+            
+        Returns:
+            True if the text appears to be meaningful dialogue, False if it's likely noise
+        """
+        if not ocr_text or len(ocr_text.strip()) == 0:
+            return False
+            
+        text = ocr_text.strip().lower()
+        
+        # Minimum length check - meaningful dialogue is usually longer than a few characters
+        if len(text) < 6:
+            return False
+        
+        # Maximum length check - OCR garbage can be extremely long
+        if len(text) > 200:
+            logger.debug(f"OCR text too long ({len(text)} chars) - likely garbage")
+            return False
+        
+        # Check for common dialogue patterns/words
+        dialogue_indicators = [
+            'you', 'the', 'and', 'are', 'use', 'can', 'have', 'will', 'would', 'could', 'should',
+            'pokemon', 'pokémon', 'items', 'store', 'battle', 'want', 'need', 'know', 'think',
+            'pc', 'computer', 'science', 'power', 'staggering', 'hello', 'welcome', 'trainer',
+            'what', 'where', 'when', 'how', 'why', 'who', 'this', 'that', 'there', 'here',
+            'got', 'get', 'give', 'take', 'come', 'go', 'see', 'look', 'find'
+        ]
+        
+        # Common OCR noise patterns to explicitly reject
+        noise_patterns = [
+            'lle', 'fyi', 'cl', 'een', 'aa', 'ii', 'oo', 'uu', 'mm', 'nn', 'll', 'tt', 'ss',
+            'xx', 'zz', 'qq', 'jj', 'kk', 'vv', 'ww', 'yy', 'ff', 'gg', 'hh', 'bb', 'cc',
+            'dd', 'pp', 'rr'  # Common OCR noise patterns
+        ]
+        
+        words = text.split()
+        meaningful_words = 0
+        
+        # Check for OCR garbage patterns that disqualify the entire text
+        if self._has_ocr_garbage_patterns(words):
+            return False
+        
+        # Count how many words look like actual dialogue words
+        for word in words:
+            # Remove punctuation for matching
+            clean_word = ''.join(c for c in word if c.isalnum())
+            if len(clean_word) >= 2:
+                # Check if it's a known noise pattern first
+                if clean_word in noise_patterns:
+                    continue  # Skip noise patterns, don't count as meaningful
+                # Check against dialogue indicators
+                elif clean_word in dialogue_indicators:
+                    meaningful_words += 1
+                # Check if word has reasonable character patterns (not random like 'cL')
+                elif self._has_reasonable_word_pattern(clean_word):
+                    meaningful_words += 1
+        
+        # Need at least 40% of words to be meaningful for it to count as dialogue
+        if len(words) > 0:
+            meaningful_ratio = meaningful_words / len(words)
+            logger.debug(f"OCR meaningfulness: {meaningful_words}/{len(words)} = {meaningful_ratio:.2f} for '{ocr_text}'")
+            return meaningful_ratio >= 0.4
+        
+        return False
+    
+    def _has_reasonable_word_pattern(self, word: str) -> bool:
+        """
+        Check if a word has reasonable character patterns vs. OCR noise.
+        
+        Args:
+            word: Word to check
+            
+        Returns:
+            True if word pattern looks reasonable
+        """
+        if len(word) < 2:
+            return False
+        
+        # Check for reasonable vowel/consonant distribution
+        vowels = 'aeiou'
+        vowel_count = sum(1 for c in word.lower() if c in vowels)
+        consonant_count = len(word) - vowel_count
+        
+        # Words should have some vowels unless they're very short
+        if len(word) >= 3 and vowel_count == 0:
+            return False
+        
+        # Very short words with only consonants are likely OCR noise
+        if len(word) <= 3 and vowel_count == 0:
+            return False
+        
+        # Check for excessive repeated characters (OCR often creates these)
+        repeated_chars = 0
+        for i in range(len(word) - 1):
+            if word[i] == word[i + 1]:
+                repeated_chars += 1
+        
+        # Too many repeated characters suggests OCR noise
+        if repeated_chars > len(word) // 2:
+            return False
+        
+        return True
+    
+    def _has_ocr_garbage_patterns(self, words: list) -> bool:
+        """
+        Detect OCR garbage patterns that indicate the text is meaningless noise.
+        
+        Args:
+            words: List of words from OCR text
+            
+        Returns:
+            True if text contains OCR garbage patterns
+        """
+        if not words or len(words) == 0:
+            return False
+        
+        # Pattern 1: Excessive repetition of single characters or short words
+        single_char_words = [w for w in words if len(w) <= 2]
+        if len(single_char_words) > len(words) * 0.5:  # More than 50% single/double char words
+            logger.debug(f"OCR garbage: Too many short words ({len(single_char_words)}/{len(words)})")
+            return True
+        
+        # Pattern 2: Check for repeated identical words (like 'a a a a a a')
+        word_counts = {}
+        for word in words:
+            clean_word = word.lower().strip()
+            word_counts[clean_word] = word_counts.get(clean_word, 0) + 1
+        
+        for word, count in word_counts.items():
+            if len(word) <= 2 and count >= 4:  # Same short word repeated 4+ times
+                logger.debug(f"OCR garbage: Repeated short word '{word}' {count} times")
+                return True
+        
+        # Pattern 3: Too many "words" - dialogue is usually concise
+        if len(words) > 25:  # Pokemon dialogue is typically much shorter
+            logger.debug(f"OCR garbage: Too many words ({len(words)}) for typical dialogue")
+            return True
+        
+        # Pattern 4: Check for excessive all-caps "words" (OCR noise often creates these)
+        all_caps_words = [w for w in words if len(w) >= 2 and w.isupper()]
+        if len(all_caps_words) > len(words) * 0.4:  # More than 40% all-caps
+            logger.debug(f"OCR garbage: Too many all-caps words ({len(all_caps_words)}/{len(words)})")
+            return True
+        
+        # Pattern 5: Check for random character sequences (like 'ePID', 'SCONES')
+        random_looking = 0
+        for word in words:
+            if len(word) >= 3:
+                # Check for mixed case in middle of word (like 'ePID')
+                has_mixed_case = any(c.islower() for c in word) and any(c.isupper() for c in word)
+                # Check for uncommon letter combinations
+                has_weird_patterns = any(combo in word.lower() for combo in ['pq', 'qp', 'xz', 'zx', 'jr', 'rj'])
+                if has_mixed_case or has_weird_patterns:
+                    random_looking += 1
+        
+        if random_looking > len(words) * 0.3:  # More than 30% weird words
+            logger.debug(f"OCR garbage: Too many random-looking words ({random_looking}/{len(words)})")
+            return True
+        
+        return False
 
     def _is_valid_text_byte(self, byte: int) -> bool:
         """Check if a byte represents a valid text character in Pokemon Emerald"""

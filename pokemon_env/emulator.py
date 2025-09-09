@@ -543,8 +543,12 @@ class EmeraldEmulator:
             "sound": self.sound,
         }
 
-    def get_comprehensive_state(self) -> Dict[str, Any]:
-        """Get comprehensive game state including visual and memory data using enhanced memory reader"""
+    def get_comprehensive_state(self, screenshot=None) -> Dict[str, Any]:
+        """Get comprehensive game state including visual and memory data using enhanced memory reader
+        
+        Args:
+            screenshot: Optional PIL Image screenshot to use. If None, will call get_screenshot()
+        """
         # Simple caching to avoid redundant calls within a short time window
         import time
         current_time = time.time()
@@ -554,9 +558,13 @@ class EmeraldEmulator:
             if current_time - self._cached_state_time < 0.1:  # 100ms cache
                 return self._cached_state
         
+        # Use provided screenshot or get a new one
+        if screenshot is None:
+            screenshot = self.get_screenshot()
+        
         # Use the enhanced memory reader's comprehensive state method
         if self.memory_reader:
-            state = self.memory_reader.get_comprehensive_state()
+            state = self.memory_reader.get_comprehensive_state(screenshot)
         else:
             # Fallback to basic state
             state = {
@@ -590,8 +598,7 @@ class EmeraldEmulator:
                 }
             }
         
-        # Get visual observation
-        screenshot = self.get_screenshot()
+        # Use screenshot already captured
         if screenshot:
             state["visual"]["screenshot"] = screenshot
         

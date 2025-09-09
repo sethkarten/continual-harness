@@ -42,7 +42,7 @@ running = True
 step_count = 0
 agent_step_count = 0  # Track agent steps separately from frame steps
 current_obs = None
-fps = 60
+fps = 120
 
 # Pygame display
 screen_width = 480  # 240 * 2 (upscaled)

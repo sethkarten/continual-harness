@@ -388,6 +388,115 @@ def setup_emulator(rom_path="Emerald-GBAdvance/rom.gba", load_state=None):
         print(f"❌ Failed to initialize emulator: {e}")
         return False
 
+def display_comprehensive_state():
+    """Display the comprehensive state exactly as the LLM sees it"""
+    global emulator
+    
+    if not emulator:
+        print("❌ Emulator not initialized")
+        return
+    
+    try:
+        print("\n" + "="*80)
+        print("📊 COMPREHENSIVE STATE (What the LLM Sees)")
+        print("="*80)
+        
+        # Get the comprehensive state with screenshot for OCR
+        screenshot = emulator.get_screenshot()
+        state = emulator.get_comprehensive_state(screenshot)
+        
+        # Format the state using the same formatter the agent uses
+        from utils.state_formatter import format_state_for_llm
+        formatted_state = format_state_for_llm(state)
+        
+        print(formatted_state)
+        
+        # Show additional debug info
+        print("\n" + "-"*80)
+        print("🔍 DEBUG INFO")
+        print("-"*80)
+        
+        # Show dialogue detection details
+        game_data = state.get('game', {})
+        dialog_text = game_data.get('dialog_text', '')
+        dialogue_detected = game_data.get('dialogue_detected', {})
+        
+        print(f"Dialog Text (raw): '{dialog_text}'")
+        print(f"Dialogue Detection: {dialogue_detected}")
+        
+        # If we have OCR enabled, show OCR vs Memory comparison
+        if emulator.memory_reader and emulator.memory_reader._ocr_enabled and screenshot:
+            print("\n📖 OCR vs Memory Comparison:")
+            memory_only = emulator.memory_reader.read_dialog()
+            
+            # Get OCR reading
+            ocr_only = ""
+            if emulator.memory_reader._ocr_detector:
+                ocr_only = emulator.memory_reader._ocr_detector.detect_dialogue_from_screenshot(screenshot)
+            
+            combined = emulator.memory_reader.read_dialog_with_ocr_fallback(screenshot)
+            
+            print(f"  Memory: '{memory_only}'")
+            print(f"  OCR:    '{ocr_only}'")
+            print(f"  Combined: '{combined}'")
+            
+            # Show which case we're in using the same logic as the OCR fallback
+            memory_clean = memory_only.strip() if memory_only else ""
+            ocr_clean = ocr_only.strip() if ocr_only else ""
+            
+            # Apply the same meaningfulness detection as the OCR fallback
+            ocr_is_meaningful = False
+            if ocr_clean and emulator.memory_reader:
+                ocr_is_meaningful = emulator.memory_reader._is_ocr_meaningful_dialogue(ocr_clean)
+            
+            # Apply the same residual text filtering as the OCR fallback  
+            memory_filtered = memory_clean
+            if memory_clean:
+                cleaned_text = memory_clean.lower()
+                residual_indicators = [
+                    "got away safely", "fled from", "escaped", "ran away",
+                    "fainted", "defeated", "victory", "experience points", 
+                    "gained", "grew to", "learned"
+                ]
+                if any(indicator in cleaned_text for indicator in residual_indicators):
+                    memory_filtered = ""  # Filter out residual text
+            
+            # Use the same case logic as the OCR fallback
+            if memory_filtered and ocr_clean and ocr_is_meaningful:
+                print("  ✅ Case 1: Both meaningful -> Using memory")
+            elif not memory_filtered and ocr_clean and ocr_is_meaningful:
+                print("  🔄 Case 2: OCR only -> Using OCR")
+            elif memory_filtered and (not ocr_clean or not ocr_is_meaningful):
+                if not ocr_clean:
+                    print("  🚨 Case 3: Memory only -> SUPPRESSED (OCR found nothing)")
+                else:
+                    print(f"  🚨 Case 3: Memory only -> SUPPRESSED (OCR meaningless: '{ocr_clean}')")
+            else:
+                print("  ❌ Case 4: Neither detected")
+        
+        # Show in-battle status
+        print(f"\nIn Battle: {game_data.get('is_in_battle', False)}")
+        print(f"Game State: {game_data.get('game_state', 'unknown')}")
+        
+        # Show player location
+        player_data = state.get('player', {})
+        position = player_data.get('position', {})
+        location = player_data.get('location', {})
+        print(f"\nPlayer Position: X={position.get('x') if isinstance(position, dict) else position}, Y={position.get('y') if isinstance(position, dict) else 'N/A'}")
+        
+        # Handle location being either dict or string
+        if isinstance(location, dict):
+            print(f"Location: Bank={location.get('map_bank')}, Map={location.get('map_number')}")
+        else:
+            print(f"Location: {location}")
+        
+        print("="*80)
+        
+    except Exception as e:
+        print(f"❌ Failed to display comprehensive state: {e}")
+        import traceback
+        traceback.print_exc()
+
 def setup_agent(backend="openai", model_name="gpt-4o"):
     """Initialize agent modules"""
     global agent_modules
@@ -422,7 +531,12 @@ def handle_input(manual_mode=True):
             elif event.key == pygame.K_s:
                 save_screenshot()
             elif event.key == pygame.K_m:
-                display_map()
+                if pygame.key.get_mods() & pygame.KMOD_SHIFT:
+                    # Shift+M for map
+                    display_map()
+                else:
+                    # Regular 'M' for comprehensive state (what LLM sees)
+                    display_comprehensive_state()
             elif event.key == pygame.K_SPACE:  # Spacebar to trigger agent action
                 return True, ["AGENT_STEP"]
             elif event.key == pygame.K_TAB:  # Tab to toggle agent/manual mode
@@ -459,7 +573,7 @@ def handle_input(manual_mode=True):
     
     return True, actions_pressed
 
-# Global action queue for 60 FPS background loop
+# Global action queue for 120 FPS background loop
 current_actions = []
 action_lock = threading.Lock()
 pending_agent_action = False
@@ -505,27 +619,28 @@ def queue_agent_step():
     global agent_processing_queue, emulator
     
     if emulator and agent_modules:
-        # Get current game state and queue it for processing
-        game_state = emulator.get_comprehensive_state()
+        # Get current screenshot and use it for comprehensive state to ensure OCR uses latest frame
+        screenshot = emulator.get_screenshot()
+        game_state = emulator.get_comprehensive_state(screenshot)
         agent_processing_queue.append(game_state)
         print("📝 Agent step queued for async processing")
     else:
         print("❌ Cannot queue agent step - emulator or agent not ready")
 
 def background_emulator_loop():
-    """Background 60 FPS emulator loop"""
-    global current_obs, last_agent_action, pending_agent_action, running, current_actions, last_game_state
+    """Background 120 FPS emulator loop"""
+    global current_obs, last_agent_action, pending_agent_action, running, current_actions, last_game_state, fps
     
-    print("🎮 Starting 60 FPS background emulator loop...")
+    print(f"🎮 Starting {fps} FPS background emulator loop...")
     last_broadcast_time = 0
-    broadcast_interval = 1/30  # Broadcast at 30 FPS for smoother livestream
+    broadcast_interval = 1/10  # Broadcast at 10 FPS to reduce overhead
     
     # Button press timing state
     current_button = None  # Currently pressed button
     button_hold_frames = 0  # Frames to hold button
     button_release_frames = 0  # Frames to wait after release
-    BUTTON_HOLD_DURATION = 6  # Hold button for 6 frames (100ms at 60fps)
-    BUTTON_RELEASE_DELAY = 15  # Wait 15 frames between presses (250ms at 60fps)
+    BUTTON_HOLD_DURATION = 6  # Hold button for 6 frames (~50ms at 120 FPS)
+    BUTTON_RELEASE_DELAY = 12  # Wait 12 frames (~100ms at 120 FPS) between presses
     
     # Wait for emulator to be properly initialized
     while running:
@@ -653,23 +768,12 @@ def background_emulator_loop():
         # Run frame with actions (or no actions)
         emulator.run_frame_with_buttons(actions_to_execute)
         
-        # Update screenshot and cache game state
+        # Update screenshot (very lightweight - just get the PIL image)
         screenshot = emulator.get_screenshot()
         if screenshot:
+            # Store PIL image directly, convert to numpy only when display needs it
             with obs_lock:
-                current_obs = np.array(screenshot)
-            
-            # Convert screenshot to base64 here for better performance
-            try:
-                buffer = io.BytesIO()
-                screenshot.save(buffer, format='PNG')
-                img_str = base64.b64encode(buffer.getvalue()).decode()
-                
-                # Update global frame data directly
-                global latest_frame
-                latest_frame = img_str
-            except Exception as e:
-                logger.debug(f"Screenshot conversion error in loop: {e}")
+                current_obs = screenshot  # Store PIL image directly
         else:
             # Debug: Log when screenshot is None
             if hasattr(emulator, '_screenshot_fail_count'):
@@ -680,30 +784,37 @@ def background_emulator_loop():
                 emulator._screenshot_fail_count = 1
                 print("⚠️  First screenshot failure")
         
-        # Cache game state and broadcast updates periodically
+        # Cache game state and broadcast updates periodically (expensive operation)
         current_time = time.time()
         if current_time - last_broadcast_time > broadcast_interval:
             try:
-                # Get game state for caching and broadcasting
-                game_state = emulator.get_comprehensive_state()
-                last_game_state = game_state
+                # Only get comprehensive state when we actually need to broadcast (expensive)
+                if websocket_connections and len(websocket_connections) > 0:
+                    # Use the current screenshot we already have to avoid redundant get_screenshot() calls
+                    game_state = emulator.get_comprehensive_state(screenshot)
+                    last_game_state = game_state
                 
-                # Broadcast to WebSocket clients (run in thread)
-                if websocket_connections:
-                    try:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        loop.run_until_complete(broadcast_state_update())
-                        loop.close()
-                    except Exception as e:
-                        logger.debug(f"Broadcast error: {e}")
+                # Only broadcast if we have WebSocket clients (skip expensive operations if not needed)
+                if websocket_connections and len(websocket_connections) > 0:
+                    # Move expensive encoding to background thread to avoid blocking main loop
+                    def background_broadcast():
+                        try:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            loop.run_until_complete(broadcast_state_update())
+                            loop.close()
+                        except Exception as e:
+                            logger.debug(f"Background broadcast error: {e}")
+                    
+                    # Run in background thread to not block main loop
+                    threading.Thread(target=background_broadcast, daemon=True).start()
                 
                 last_broadcast_time = current_time
             except Exception as e:
                 logger.debug(f"State update error: {e}")
         
-        # Run at 60 FPS (16.67ms per frame)
-        time.sleep(1.0 / 60.0)
+        # Run at 120 FPS for maximum performance
+        time.sleep(1.0 / 120)
 
 def step_emulator(actions_pressed):
     """Queue actions for the background emulator loop"""
@@ -723,7 +834,12 @@ def update_display():
         obs_copy = current_obs.copy() if current_obs is not None else None
     
     if obs_copy is not None:
-        obs_surface = pygame.surfarray.make_surface(obs_copy.swapaxes(0, 1))
+        # Convert PIL image to numpy only when needed for display
+        if hasattr(obs_copy, 'size'):  # PIL image
+            obs_array = np.array(obs_copy)
+            obs_surface = pygame.surfarray.make_surface(obs_array.swapaxes(0, 1))
+        else:  # Already numpy array (fallback)
+            obs_surface = pygame.surfarray.make_surface(obs_copy.swapaxes(0, 1))
         scaled_surface = pygame.transform.scale(obs_surface, (screen_width, screen_height))
         screen.blit(scaled_surface, (0, 0))
     else:
@@ -784,8 +900,13 @@ def save_screenshot():
     if obs_copy is not None:
         timestamp = int(time.time())
         filename = f"agent_direct_screenshot_{timestamp}.png"
-        img = Image.fromarray(obs_copy)
-        img.save(filename)
+        
+        # Handle both PIL images and numpy arrays
+        if hasattr(obs_copy, 'save'):  # PIL image
+            obs_copy.save(filename)
+        else:  # numpy array
+            img = Image.fromarray(obs_copy)
+            img.save(filename)
         print(f"Screenshot saved: {filename}")
 
 def display_map():
@@ -810,8 +931,9 @@ def display_map():
         # Get raw map data FIRST (this should be clean)
         raw_map_data = emulator.memory_reader.read_map_around_player(radius=7)
         
-        # Get comprehensive state - this is what the agent receives
-        state = emulator.get_comprehensive_state()
+        # Get comprehensive state using latest screenshot - this is what the agent receives
+        screenshot = emulator.get_screenshot()
+        state = emulator.get_comprehensive_state(screenshot)
         
         # Get the formatted state that the agent receives
         agent_view = format_state_for_llm(state)
@@ -880,24 +1002,24 @@ def init_pygame():
     clock = pygame.time.Clock()
 
 def game_loop(manual_mode=True, agent_auto=False):
-    """Main game loop - handles input and display while background loop runs emulator at 60 FPS"""
-    global running, step_count
+    """Main game loop - handles input and display while background loop runs emulator at 120 FPS"""
+    global running, step_count, fps
     
     mode_text = "AGENT" if agent_mode else "MANUAL"
     print(f"Starting Direct Agent game loop in {mode_text} mode...")
     print("Controls: WASD/Arrows=Move, Z=A, X=B, Space=Agent Step")
-    print("Special: Tab=Mode Toggle, A=Auto Toggle, S=Screenshot, M=Map, 1=Save, 2=Load, Esc=Quit")
+    print("Special: Tab=Mode Toggle, A=Auto Toggle, S=Screenshot, M=LLM State, Shift+M=Map, 1=Save, 2=Load, Esc=Quit")
     
     if agent_auto:
         print("Agent auto mode: Agent will act automatically every few seconds")
     
-    # Start background 60 FPS emulator loop
+    # Start background emulator loop at specified FPS
     emulator_thread = threading.Thread(target=background_emulator_loop, daemon=True)
     emulator_thread.start()
     
     last_agent_time = time.time()
     agent_interval = 3.0  # Agent acts every 3 seconds in auto mode
-    display_fps = 30  # Display updates at 30 FPS (emulator runs at 60 FPS in background)
+    display_fps = 120  # Display updates at 120 FPS to match emulator performance
     
     while running:
         # Handle input
@@ -919,7 +1041,7 @@ def game_loop(manual_mode=True, agent_auto=False):
         with step_lock:
             step_count += 1
         
-        # Display loop runs at 30 FPS while emulator runs at 60 FPS in background
+        # Display loop runs at 120 FPS to match emulator performance
         clock.tick(display_fps)
 
 def run_fastapi_server(port):
@@ -950,16 +1072,26 @@ async def get_comprehensive_state():
         raise HTTPException(status_code=400, detail="Emulator not initialized")
     
     try:
-        # Get game state
-        state = emulator.get_comprehensive_state()
+        # Use current_obs (latest frame from 120 FPS loop) for OCR performance
+        screenshot_for_state = None
+        with obs_lock:
+            if current_obs is not None:
+                # current_obs is now a PIL image directly
+                screenshot_for_state = current_obs.copy() if hasattr(current_obs, 'copy') else current_obs
         
-        # If screenshot is missing, try to use current_obs
+        # Get game state using the latest screenshot
+        state = emulator.get_comprehensive_state(screenshot_for_state)
+        
+        # If screenshot is missing in state, use current_obs as fallback
         if not state.get("visual", {}).get("screenshot"):
             with obs_lock:
                 if current_obs is not None:
                     try:
-                        # Convert numpy array to PIL Image
-                        img = Image.fromarray(current_obs.astype('uint8'), 'RGB')
+                        # current_obs is now a PIL image, handle both cases for backward compatibility
+                        if hasattr(current_obs, 'save'):  # PIL image
+                            img = current_obs
+                        else:  # numpy array (fallback)
+                            img = Image.fromarray(current_obs.astype('uint8'), 'RGB')
                         if "visual" not in state:
                             state["visual"] = {}
                         state["visual"]["screenshot"] = img

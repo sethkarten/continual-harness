@@ -117,7 +117,7 @@ def action_step(memory_context, current_plan, latest_observation, frame, state_d
     Valid buttons: A, B, SELECT, START, UP, DOWN, LEFT, RIGHT, L, R
     - A: Interact with NPCs/objects, confirm selections, advance dialogue, use moves in battle
     - B: Cancel menus, back out of interfaces, run faster (with running shoes), flee from battle
-    - START: Open main menu (Pokedex, Pokemon, Bag, etc.)
+    - START: Open main menu (Title sequence, Pokedex, Pokemon, Bag, etc.)
     - SELECT: Use registered key item (typically unused)
     - UP/DOWN/LEFT/RIGHT: Move character, navigate menus, select options
     - L/R: Cycle through pages in some menus, switch Pokemon in battle (rare usage)
