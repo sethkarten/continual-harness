@@ -144,7 +144,7 @@ pip install -r requirements.txt
        └── PokemonEmerald.gba  # Your ROM file here
    ```
 
-2. The ROM file can be named anything with a `.gba` extension, but make sure it's a valid Pokémon Emerald ROM by checking the hash with `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
+2. The ROM file can be named anything with a `.gba` extension, but make sure it's a valid Pokémon Emerald ROM by checking the SHA-1 hash with `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
 
 ## VLM Backend Setup
 
@@ -264,6 +264,62 @@ python agent.py \
 - **Web Interface**: View game state at `http://localhost:8000`
 - **Logs**: Monitor agent decisions in the terminal
 - **Debug**: Use `--debug-state` flag for detailed state information
+
+## Alternative: Agent Direct Mode
+
+`agent_direct.py` runs the emulator and agent in a single process, providing better integration and real-time control.
+
+### Features
+- **Integrated System**: Emulator and agent run in the same process
+- **Real-time Web Interface**: Live streaming at 30 FPS with WebSocket support
+- **Manual/Agent Mode Switching**: Toggle between manual control and AI agent
+- **Agent Auto Mode**: Agent can play automatically or step-by-step
+- **Better Performance**: Reduced latency between agent decisions and game actions
+
+### Running Agent Direct
+
+```bash
+# Basic usage (starts in agent mode by default)
+python agent_direct.py
+
+# With specific VLM backend
+python agent_direct.py --backend gemini --model-name gemini-2.5-flash
+
+# Start in manual mode
+python agent_direct.py --manual-mode
+
+# Enable agent auto-play
+python agent_direct.py --agent-auto
+
+# Custom port
+python agent_direct.py --port 8080
+
+# No display mode (headless)
+python agent_direct.py --no-display --agent-auto
+```
+
+### Web Interface Controls
+- **Access**: `http://localhost:8080` (or your custom port)
+- **Mode Toggle**: Press `M` to switch between Manual and Agent mode
+- **Agent Auto**: Press `O` to toggle automatic agent actions
+- **Manual Step**: Press `SPACE` to trigger one agent action (when auto is off)
+- **Game Controls**: Arrow keys, A, B, START, SELECT (in manual mode)
+
+### Command Line Options for Agent Direct
+
+```bash
+python agent_direct.py [OPTIONS]
+
+Options:
+  --rom PATH               Path to Pokemon Emerald ROM (default: searches for *.gba)
+  --load-state PATH        Load from a saved state file
+  --backend TEXT           VLM backend (openai/gemini/local/auto, default: openai)
+  --model-name TEXT        Model name (default: gpt-4o)
+  --port INTEGER           Server port (default: 8080)
+  --no-display            Run without PyGame display window
+  --agent-auto            Enable automatic agent actions on startup
+  --manual-mode           Start in manual mode instead of agent mode
+```
 
 ## Command Line Options
 

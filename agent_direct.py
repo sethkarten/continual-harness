@@ -51,6 +51,7 @@ last_agent_action = None
 agent_mode = True   # True = agent (default), False = manual
 agent_auto_enabled = False  # Auto agent actions
 last_game_state = None  # Cache for web interface
+recent_manual_actions = []  # Track recent manual button presses with timestamps
 
 # Agent processing queues for async processing
 agent_processing_queue = []
@@ -98,6 +99,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global state for streaming data (initialized for HTTP endpoints)
+latest_frame = ""
+latest_text = ""  
+latest_plan = ""
+latest_memory_status = "idle"
+
+# Debug logging rate limiting
+last_debug_log_time = {
+    "frame": 0,
+    "text": 0,
+    "plan": 0,
+    "memory": 0
+}
 
 # API Models
 class AgentActionRequest(BaseModel):
@@ -235,8 +250,8 @@ class AgentModules:
         """Get current agent status for API"""
         return {
             "thinking": self.thinking,
-            "last_observation": str(self.last_observation)[:200] + "..." if self.last_observation else "",
-            "last_plan": str(self.last_plan)[:200] + "..." if self.last_plan else "",
+            "last_observation": str(self.last_observation) if self.last_observation else "",
+            "last_plan": str(self.last_plan) if self.last_plan else "",
             "last_action": str(self.last_action) if self.last_action else "",
             "reasoning": self.last_action.get("reasoning", "") if isinstance(self.last_action, dict) else "",
             "memory_size": len(self.memory_context),
@@ -246,20 +261,46 @@ class AgentModules:
 
 async def broadcast_state_update():
     """Broadcast current game state to all connected WebSocket clients"""
-    global last_game_state
+    global last_game_state, agent_modules
     
     if not websocket_connections or not last_game_state:
         return
     
     try:
+        # Get agent status if available
+        agent_status = {}
+        if agent_modules:
+            agent_status = {
+                "thinking": agent_modules.thinking,
+                "last_observation": str(agent_modules.last_observation)[:500] if agent_modules.last_observation else "",
+                "last_plan": str(agent_modules.last_plan)[:500] if agent_modules.last_plan else "",
+                "last_action": agent_modules.last_action if agent_modules.last_action else {},
+                "step_counter": agent_modules.step_counter
+            }
+        
+        # Extract party data properly
+        party_data = []
+        if "player" in last_game_state:
+            player_data = last_game_state["player"]
+            if "party" in player_data and player_data["party"]:
+                party = player_data["party"]
+                if isinstance(party, dict) and "pokemon" in party:
+                    party_data = party["pokemon"]
+                elif isinstance(party, list):
+                    party_data = party
+        
         message = json.dumps({
             "type": "state_update",
             "data": {
                 "screenshot": last_game_state.get("visual", {}).get("screenshot_base64", ""),
                 "player": last_game_state.get("player", {}),
                 "game": last_game_state.get("game", {}),
-                "map": last_game_state.get("map", {}).get("current_location", "Unknown"),
+                "party": party_data,
+                "map": last_game_state.get("map", {}),
+                "location": last_game_state.get("map", {}).get("current_location", "Unknown"),
                 "agent_mode": agent_mode,
+                "agent_auto": agent_auto_enabled,
+                "agent": agent_status,
                 "agent_thinking": agent_thinking,
                 "last_action": last_agent_action,
                 "step": step_count,
@@ -267,7 +308,7 @@ async def broadcast_state_update():
             }
         })
         
-        # Send to all connected clients
+        # Send to all connected WebSocket clients
         disconnected = set()
         for websocket in websocket_connections:
             try:
@@ -278,6 +319,23 @@ async def broadcast_state_update():
         # Remove disconnected clients
         for ws in disconnected:
             websocket_connections.discard(ws)
+            
+        # Update global streaming data for HTTP endpoints
+        global latest_frame, latest_text, latest_plan, latest_memory_status
+        
+        screenshot = last_game_state.get("visual", {}).get("screenshot_base64", "")
+        if screenshot:
+            latest_frame = screenshot
+        
+        # Update agent status 
+        if agent_status.get('last_observation'):
+            latest_text = agent_status['last_observation']
+        
+        if agent_status.get('last_plan'):  
+            latest_plan = agent_status['last_plan']
+            
+        latest_memory_status = "refreshed"
+            
     except Exception as e:
         logger.error(f"Error broadcasting state: {e}")
 
@@ -460,7 +518,7 @@ def background_emulator_loop():
     
     print("🎮 Starting 60 FPS background emulator loop...")
     last_broadcast_time = 0
-    broadcast_interval = 1/10  # Broadcast at 10 FPS
+    broadcast_interval = 1/30  # Broadcast at 30 FPS for smoother livestream
     
     # Button press timing state
     current_button = None  # Currently pressed button
@@ -509,6 +567,18 @@ def background_emulator_loop():
         if manual_actions:
             # Manual actions bypass timing (for immediate response)
             actions_to_execute = manual_actions
+            # Track manual actions for web interface
+            global recent_manual_actions
+            current_time = time.time()
+            for action in manual_actions:
+                recent_manual_actions.append({
+                    "action": action,
+                    "timestamp": current_time,
+                    "type": "manual"
+                })
+            # Keep only last 20 actions
+            if len(recent_manual_actions) > 20:
+                recent_manual_actions = recent_manual_actions[-20:]
             # Clear any pending button states
             current_button = None
             button_hold_frames = 0
@@ -536,6 +606,14 @@ def background_emulator_loop():
                     button_action = agent_action["action"]
                     print(f"🎮 Agent button press: {button_action}")
                     last_agent_action = agent_action
+                    # Track agent actions for web interface
+                    recent_manual_actions.append({
+                        "action": button_action,
+                        "timestamp": time.time(),
+                        "type": "agent"
+                    })
+                    if len(recent_manual_actions) > 20:
+                        recent_manual_actions = recent_manual_actions[-20:]
                     # Start holding the new button
                     current_button = button_action
                     button_hold_frames = BUTTON_HOLD_DURATION
@@ -580,6 +658,18 @@ def background_emulator_loop():
         if screenshot:
             with obs_lock:
                 current_obs = np.array(screenshot)
+            
+            # Convert screenshot to base64 here for better performance
+            try:
+                buffer = io.BytesIO()
+                screenshot.save(buffer, format='PNG')
+                img_str = base64.b64encode(buffer.getvalue()).decode()
+                
+                # Update global frame data directly
+                global latest_frame
+                latest_frame = img_str
+            except Exception as e:
+                logger.debug(f"Screenshot conversion error in loop: {e}")
         else:
             # Debug: Log when screenshot is None
             if hasattr(emulator, '_screenshot_fail_count'):
@@ -863,6 +953,20 @@ async def get_comprehensive_state():
         # Get game state
         state = emulator.get_comprehensive_state()
         
+        # If screenshot is missing, try to use current_obs
+        if not state.get("visual", {}).get("screenshot"):
+            with obs_lock:
+                if current_obs is not None:
+                    try:
+                        # Convert numpy array to PIL Image
+                        img = Image.fromarray(current_obs.astype('uint8'), 'RGB')
+                        if "visual" not in state:
+                            state["visual"] = {}
+                        state["visual"]["screenshot"] = img
+                        logger.debug("Used current_obs as fallback screenshot")
+                    except Exception as fallback_error:
+                        logger.debug(f"Fallback screenshot error: {fallback_error}")
+        
         # Add agent information
         agent_status = agent_modules.get_agent_status() if agent_modules else {
             "thinking": False,
@@ -875,13 +979,39 @@ async def get_comprehensive_state():
         
         state["agent"] = agent_status
         
-        # Convert screenshot to base64
-        if state["visual"]["screenshot"]:
-            buffer = io.BytesIO()
-            state["visual"]["screenshot"].save(buffer, format='PNG')
-            img_str = base64.b64encode(buffer.getvalue()).decode()
-            state["visual"]["screenshot_base64"] = img_str
-            del state["visual"]["screenshot"]
+        # Convert screenshot to base64 if available
+        if "visual" in state and "screenshot" in state["visual"] and state["visual"]["screenshot"]:
+            try:
+                buffer = io.BytesIO()
+                state["visual"]["screenshot"].save(buffer, format='PNG')
+                img_str = base64.b64encode(buffer.getvalue()).decode()
+                state["visual"]["screenshot_base64"] = img_str
+                del state["visual"]["screenshot"]
+            except Exception as img_error:
+                logger.debug(f"Screenshot conversion error: {img_error}")
+                state["visual"]["screenshot_base64"] = ""
+        else:
+            # Ensure visual dict exists with empty screenshot
+            if "visual" not in state:
+                state["visual"] = {}
+            state["visual"]["screenshot_base64"] = ""
+        
+        # Update global streaming variables for HTTP endpoints
+        global latest_frame, latest_text, latest_plan, latest_memory_status
+        
+        # Update frame data
+        screenshot = state.get("visual", {}).get("screenshot_base64", "")
+        if screenshot:
+            latest_frame = screenshot
+        
+        # Update agent status data
+        if agent_status.get('last_observation'):
+            latest_text = agent_status['last_observation']
+        
+        if agent_status.get('last_plan'):  
+            latest_plan = agent_status['last_plan']
+            
+        latest_memory_status = "refreshed"
         
         with step_lock:
             current_step = step_count
@@ -930,14 +1060,31 @@ async def take_action(request: AgentActionRequest):
 
 @app.get("/agent")
 async def get_agent_status():
-    """Get agent status"""
-    if agent_modules is None:
-        return {"status": "not_initialized", "message": "Agent not initialized"}
+    """Get agent status with thinking data for stream.html compatibility"""
+    # Get the agent thinking data
+    thinking_response = await get_agent_thinking()
     
-    return {
-        "status": "initialized",
-        **agent_modules.get_agent_status()
+    # Base response
+    response = {
+        "status": "initialized" if agent_modules else "manual_mode",
+        "current_step": thinking_response.get("current_step", 0),
+        "recent_interactions": thinking_response.get("recent_interactions", []),
+        "current_thought": thinking_response.get("current_thought", ""),
+        "confidence": thinking_response.get("confidence", 0.0)
     }
+    
+    # Add agent module status if available
+    if agent_modules is not None:
+        agent_status = agent_modules.get_agent_status()
+        response.update(agent_status)
+    else:
+        response.update({
+            "message": "Manual mode active - Agent not running",
+            "last_action": "",
+            "reasoning": ""
+        })
+    
+    return response
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -972,17 +1119,342 @@ async def toggle_auto():
     print(f"🤖 Auto agent {auto_text} via API")
     return {"auto_enabled": agent_auto_enabled, "status": auto_text}
 
-@app.get("/")
-async def get_web_interface():
-    """Serve the web interface"""
+# Streaming endpoints for stream.html compatibility
+@app.get("/api/frame")
+async def get_latest_frame():
+    """Get latest game frame"""
+    global latest_frame, last_debug_log_time
+    frame_len = len(latest_frame) if latest_frame else 0
+    
+    # Rate limited debug logging - only log once every 5 seconds
+    current_time = time.time()
+    if current_time - last_debug_log_time["frame"] > 5:
+        logger.debug(f"Frame endpoint: {frame_len} chars")
+        last_debug_log_time["frame"] = current_time
+    
+    return {"frame": latest_frame}
+
+@app.get("/api/text")  
+async def get_latest_text():
+    """Get latest agent observation"""
+    global latest_text, last_debug_log_time
+    text_len = len(latest_text) if latest_text else 0
+    
+    # Rate limited debug logging
+    current_time = time.time()
+    if current_time - last_debug_log_time["text"] > 5:
+        logger.debug(f"Text endpoint: {text_len} chars")
+        last_debug_log_time["text"] = current_time
+    
+    return {"text": latest_text}
+
+@app.get("/api/plan")
+async def get_latest_plan():
+    """Get latest agent plan"""
+    global latest_plan, last_debug_log_time
+    plan_len = len(latest_plan) if latest_plan else 0
+    
+    # Rate limited debug logging
+    current_time = time.time()
+    if current_time - last_debug_log_time["plan"] > 5:
+        logger.debug(f"Plan endpoint: {plan_len} chars")
+        last_debug_log_time["plan"] = current_time
+    
+    return {"plan": latest_plan}
+
+@app.get("/api/memory")
+async def get_memory_status():
+    """Get memory update status"""
+    global latest_memory_status, last_debug_log_time
+    
+    # Rate limited debug logging
+    current_time = time.time()
+    if current_time - last_debug_log_time["memory"] > 5:
+        logger.debug(f"Memory endpoint: {latest_memory_status}")
+        last_debug_log_time["memory"] = current_time
+    
+    return {"status": latest_memory_status}
+
+@app.get("/milestones")
+async def get_milestones():
+    """Get milestone tracking data for stream.html"""
+    if emulator is None:
+        return {
+            "milestones": [],
+            "completed": 0,
+            "progress": 0,
+            "tracking_system": "agent_direct",
+            "milestone_file": None
+        }
+    
+    try:
+        # Use the emulator's built-in milestone tracker
+        return emulator.get_milestones()
+        
+    except Exception as e:
+        logger.error(f"Error getting milestones: {e}")
+        return {
+            "milestones": [],
+            "completed": 0,
+            "progress": 0,
+            "tracking_system": "agent_direct",
+            "error": str(e)
+        }
+
+@app.get("/recent_actions")
+async def get_recent_actions():
+    """Get recent button presses for stream.html action queue"""
+    try:
+        recent_buttons = []
+        
+        # Primary: Use the new unified action tracking
+        global recent_manual_actions
+        if recent_manual_actions:
+            for action_data in recent_manual_actions[-20:]:  # Last 20 actions
+                if isinstance(action_data, dict):
+                    recent_buttons.append({
+                        "button": action_data["action"],
+                        "timestamp": action_data["timestamp"]
+                    })
+                else:
+                    # Fallback for old string format
+                    button_name = action_data.split(": ", 1)[-1] if ": " in action_data else action_data
+                    recent_buttons.append({
+                        "button": button_name,
+                        "timestamp": time.time()
+                    })
+        
+        # Fallback: get from agent modules if available
+        if not recent_buttons and agent_modules is not None and hasattr(agent_modules, 'recent_actions'):
+            current_time = time.time()
+            recent = agent_modules.recent_actions[-20:] if agent_modules.recent_actions else []
+            for i, action in enumerate(recent):
+                button_name = action.get('action', '') if isinstance(action, dict) else str(action)
+                if button_name:
+                    recent_buttons.append({
+                        "button": button_name,
+                        "timestamp": current_time - (len(recent) - i)
+                    })
+        
+        # Fallback: get from global last_agent_action if available
+        if not recent_buttons and last_agent_action:
+            button_name = ""
+            if isinstance(last_agent_action, dict):
+                button_name = last_agent_action.get("action", "")
+            else:
+                button_name = str(last_agent_action)
+                
+            if button_name:
+                recent_buttons.append({
+                    "button": button_name,
+                    "timestamp": time.time()
+                })
+        
+        # Return format expected by stream.html
+        return {
+            "recent_buttons": recent_buttons,
+            "count": len(recent_buttons)
+        }
+    except Exception as e:
+        logger.error(f"Error getting recent actions: {e}")
+        return {"recent_buttons": [], "count": 0, "error": str(e)}
+
+@app.get("/agent_thinking")
+async def get_agent_thinking():
+    """Get recent LLM interactions for stream.html"""
+    try:
+        # Check if llm_logs directory exists
+        if not os.path.exists("llm_logs"):
+            return {
+                "status": "inactive",
+                "current_thought": "Manual mode - No agent thinking. Use 'M' to toggle to agent mode.",
+                "confidence": 0.0,
+                "interactions_found": 0,
+                "step": 0
+            }
+        
+        # Find LLM log files
+        import glob
+        log_files = glob.glob("llm_logs/llm_log_*.jsonl")
+        
+        # Get recent interactions from the most recent log files (limit to last 3 files for performance)
+        log_files.sort(reverse=True)  # Most recent first
+        recent_interactions = []
+        
+        for log_file in log_files[:3]:  # Only check last 3 log files
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        # Get interactions from this file (last 10 lines for performance)
+                        for line in lines[-20:]:  # Get more lines for more interactions
+                            try:
+                                entry = json.loads(line.strip())
+                                if entry.get("type") == "interaction":
+                                    recent_interactions.append({
+                                        "type": entry.get("interaction_type", "unknown"),
+                                        "prompt": entry.get("prompt", ""),  # Full prompt, no truncation
+                                        "response": entry.get("response", ""),  # Full response, no truncation
+                                        "duration": entry.get("duration", 0),
+                                        "timestamp": entry.get("timestamp", "")
+                                    })
+                            except json.JSONDecodeError:
+                                continue
+                except Exception as e:
+                    logger.error(f"Error reading LLM log {log_file}: {e}")
+        
+        # Sort by timestamp and keep more recent interactions (show last 5)
+        recent_interactions.sort(key=lambda x: x.get("timestamp", ""))
+        recent_interactions = recent_interactions[-5:]  # Keep last 5 interactions
+        
+        # Provide current_thought for fallback display
+        if recent_interactions:
+            current_thought = "Agent is thinking... (see interactions below)"
+        else:
+            # Provide more detailed status based on what we found
+            log_count = len(log_files)
+            if log_count == 0:
+                current_thought = f"No LLM log files found. Agent hasn't made any VLM calls yet."
+            else:
+                current_thought = f"Found {log_count} log files but no recent interactions. Agent may be in manual mode."
+            
+            # Add mode-specific guidance
+            mode_status = "Manual" if not agent_mode else "Agent"
+            current_thought += f"\nCurrent mode: {mode_status}. Press 'M' to toggle modes."
+        
+        with step_lock:
+            current_step = step_count
+        
+        return {
+            "status": "active" if recent_interactions else "manual",
+            "current_thought": current_thought,
+            "confidence": 0.95 if recent_interactions else 0.0,
+            "timestamp": time.time(),
+            "recent_interactions": recent_interactions,
+            "current_step": current_step
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in agent thinking: {e}")
+        return {
+            "status": "error",
+            "current_thought": f"Error getting agent thinking: {str(e)}",
+            "confidence": 0.0,
+            "timestamp": time.time()
+        }
+
+async def serve_stream_html():
+    """Common function to serve stream.html with HTTP polling"""
     try:
         with open("server/stream.html", "r") as f:
             html_content = f.read()
-        # Update WebSocket URL to connect to this server
-        html_content = html_content.replace("ws://localhost:8000/ws", f"ws://localhost:{8080}/ws")
+        # Replace Socket.IO with HTTP polling
+        socket_io_code = """        // Initialize Socket.IO connection
+        const socket = io('http://127.0.0.1:8000');
+        
+        // WebSocket event handlers
+        socket.on('frame_update', function(data) {
+            document.getElementById('frame').src = `data:image/png;base64,${data.frame}`;
+        });
+        
+        socket.on('text_update', function(data) {
+            // Text updates can be logged to console if needed
+            console.log('Text update:', data.text);
+        });
+        
+        socket.on('plan_update', function(data) {
+            // Plan updates can be logged to console if needed
+            console.log('Plan update:', data.plan);
+        });
+        
+        socket.on('memory_update', function(data) {
+            // Memory updates can be logged to console if needed
+            console.log('Memory update: Memory refreshed');
+        });
+        
+        // Connection status indicators
+        socket.on('connect', function() {
+            console.log('WebSocket connected');
+            document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#33ff33';
+        });
+        
+        socket.on('disconnect', function() {
+            console.log('WebSocket disconnected');
+            document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#ff6177';
+        });"""
+        
+        http_polling_code = """        // HTTP polling for real-time updates
+        let connected = true;
+        
+        async function pollFrame() {
+            try {
+                const response = await fetch('/api/frame');
+                const data = await response.json();
+                if (data.frame) {
+                    document.getElementById('frame').src = `data:image/png;base64,${data.frame}`;
+                }
+                if (!connected) {
+                    connected = true;
+                    document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#33ff33';
+                    console.log('Connection restored');
+                }
+            } catch (error) {
+                if (connected) {
+                    connected = false;
+                    document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#ff6177';
+                    console.log('Connection lost');
+                }
+            }
+        }
+        
+        async function pollUpdates() {
+            try {
+                // Poll text updates
+                const textResponse = await fetch('/api/text');
+                const textData = await textResponse.json();
+                if (textData.text) {
+                    console.log('Text update:', textData.text);
+                }
+                
+                // Poll plan updates  
+                const planResponse = await fetch('/api/plan');
+                const planData = await planResponse.json();
+                if (planData.plan) {
+                    console.log('Plan update:', planData.plan);
+                }
+                
+                // Poll memory updates
+                const memoryResponse = await fetch('/api/memory');
+                const memoryData = await memoryResponse.json();
+                if (memoryData.status === 'refreshed') {
+                    console.log('Memory update: Memory refreshed');
+                }
+            } catch (error) {
+                console.log('Update polling error:', error);
+            }
+        }
+        
+        // Start polling
+        setInterval(pollFrame, 33); // 30 FPS
+        setInterval(pollUpdates, 100); // 10 Hz for text updates
+        
+        // Initial connection status
+        document.querySelector('.header div[style*="background-color"]').style.backgroundColor = '#33ff33';"""
+        
+        html_content = html_content.replace(socket_io_code, http_polling_code)
         return HTMLResponse(content=html_content)
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Web interface not found</h1><p>Please ensure server/stream.html exists</p>")
+
+@app.get("/")
+async def get_web_interface_root():
+    """Serve the web interface at root path"""
+    return await serve_stream_html()
+
+@app.get("/server/stream.html")
+async def get_web_interface_server_path():
+    """Serve the web interface at /server/stream.html path for compatibility"""
+    return await serve_stream_html()
 
 def main():
     """Main function"""
