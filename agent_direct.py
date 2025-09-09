@@ -52,6 +52,11 @@ agent_mode = True   # True = agent (default), False = manual
 agent_auto_enabled = False  # Auto agent actions
 last_game_state = None  # Cache for web interface
 
+# Agent processing queues for async processing
+agent_processing_queue = []
+agent_result_queue = []
+agent_processing_thread = None
+
 # Pygame display
 screen_width = 480  # 240 * 2 (upscaled)
 screen_height = 320  # 160 * 2 (upscaled)
@@ -124,6 +129,7 @@ class AgentModules:
         self.last_plan = None
         self.last_action = None
         self.thinking = False
+        self.step_counter = 0  # Track frame IDs for observations
     
     def process_game_state(self, game_state):
         """Process game state through agent modules"""
@@ -134,10 +140,19 @@ class AgentModules:
                 # Get screenshot from game state
                 frame = game_state["visual"]["screenshot"] if game_state["visual"]["screenshot"] else None
                 
+                # Increment step counter
+                self.step_counter += 1
+                
                 # 1. Perception - analyze current game state
                 observation, slow_thinking_needed = perception_step(frame, game_state, self.vlm)
                 self.last_observation = observation
-                self.observation_buffer.append(observation)
+                
+                # Store observation with frame_id like in agent.py
+                self.observation_buffer.append({
+                    "frame_id": self.step_counter,
+                    "observation": observation,
+                    "state": game_state
+                })
                 
                 # Keep observation buffer reasonable size
                 if len(self.observation_buffer) > 10:
@@ -164,7 +179,7 @@ class AgentModules:
                 self.last_plan = plan_result
                 
                 # 4. Action - select specific button input
-                action_result = action_step(
+                action_list = action_step(
                     self.memory_context,
                     self.current_plan,
                     observation,
@@ -174,9 +189,34 @@ class AgentModules:
                     self.vlm
                 )
                 
+                # Convert action list to expected dictionary format
+                if isinstance(action_list, list):
+                    if action_list:
+                        # Take first action and store rest for sequential execution
+                        action = action_list[0]
+                        remaining = action_list[1:] if len(action_list) > 1 else []
+                        action_result = {
+                            "action": action,
+                            "reasoning": f"Selected action from sequence: {', '.join(action_list)}"
+                        }
+                        if remaining:
+                            action_result["remaining_actions"] = remaining
+                    else:
+                        # Empty list, default to 'A'
+                        action_result = {
+                            "action": 'A',
+                            "reasoning": "Default action (empty list)"
+                        }
+                else:
+                    # If somehow not a list, handle gracefully
+                    action_result = {
+                        "action": str(action_list) if action_list else 'A',
+                        "reasoning": "Direct action"
+                    }
+                
                 # Store action result
                 self.last_action = action_result
-                self.recent_actions.append(action_result)
+                self.recent_actions.append(action_result["action"])
                 
                 # Keep recent actions reasonable size
                 if len(self.recent_actions) > 20:
@@ -331,12 +371,22 @@ def handle_input(manual_mode=True):
                 global agent_mode
                 agent_mode = not agent_mode
                 mode_text = "AGENT" if agent_mode else "MANUAL"
-                print(f"🔄 Switched to {mode_text} mode")
+                control_text = "(LLM controls game)" if agent_mode else "(Keyboard controls game)"
+                print(f"🔄 Switched to {mode_text} mode {control_text}")
             elif event.key == pygame.K_a:  # 'A' key to toggle auto agent
                 global agent_auto_enabled
                 agent_auto_enabled = not agent_auto_enabled
                 auto_text = "ENABLED" if agent_auto_enabled else "DISABLED"
-                print(f"🤖 Auto agent {auto_text}")
+                trigger_text = "(acts automatically)" if agent_auto_enabled else "(press Space to act)"
+                print(f"🤖 Auto agent {auto_text} {trigger_text}")
+                
+                # Show current combined state for clarity
+                if agent_mode and agent_auto_enabled:
+                    print("  ✅ Agent will act automatically every few seconds")
+                elif agent_mode and not agent_auto_enabled:
+                    print("  🎯 Agent will act when you press Spacebar")
+                elif not agent_mode:
+                    print("  ⌨️  Keyboard control active (auto setting ignored)")
             elif event.key == pygame.K_1:
                 if emulator:
                     save_file = "agent_direct_save.state"
@@ -362,11 +412,47 @@ def queue_action(actions):
     with action_lock:
         current_actions = actions.copy() if actions else []
 
+def agent_processing_worker():
+    """Dedicated thread for agent processing to avoid blocking emulator"""
+    global agent_processing_queue, agent_result_queue, agent_modules, running
+    
+    print("🧠 Starting agent processing thread...")
+    
+    while running:
+        # Check for agent processing requests
+        if agent_processing_queue and agent_modules:
+            # Get the latest game state to process
+            game_state = agent_processing_queue.pop(0)
+            
+            try:
+                print("🤖 Agent processing started (async)...")
+                agent_action = agent_modules.process_game_state(game_state)
+                
+                # Put result in result queue
+                agent_result_queue.append(agent_action)
+                print(f"✅ Agent processing complete: {agent_action.get('action', 'NO_ACTION')} (reasoning: {agent_action.get('reasoning', 'No reason')[:50]}...)")
+                
+            except Exception as e:
+                print(f"❌ Agent processing error: {e}")
+                import traceback
+                traceback.print_exc()
+                agent_result_queue.append({"action": "A", "reasoning": f"Error: {e}"})
+        else:
+            time.sleep(0.1)  # Check every 100ms
+    
+    print("🧠 Agent processing thread stopped")
+
 def queue_agent_step():
-    """Queue an agent decision step"""
-    global pending_agent_action
-    with action_lock:
-        pending_agent_action = True
+    """Queue an agent step to be processed asynchronously"""
+    global agent_processing_queue, emulator
+    
+    if emulator and agent_modules:
+        # Get current game state and queue it for processing
+        game_state = emulator.get_comprehensive_state()
+        agent_processing_queue.append(game_state)
+        print("📝 Agent step queued for async processing")
+    else:
+        print("❌ Cannot queue agent step - emulator or agent not ready")
 
 def background_emulator_loop():
     """Background 60 FPS emulator loop"""
@@ -376,6 +462,33 @@ def background_emulator_loop():
     last_broadcast_time = 0
     broadcast_interval = 1/10  # Broadcast at 10 FPS
     
+    # Button press timing state
+    current_button = None  # Currently pressed button
+    button_hold_frames = 0  # Frames to hold button
+    button_release_frames = 0  # Frames to wait after release
+    BUTTON_HOLD_DURATION = 6  # Hold button for 6 frames (100ms at 60fps)
+    BUTTON_RELEASE_DELAY = 15  # Wait 15 frames between presses (250ms at 60fps)
+    
+    # Wait for emulator to be properly initialized
+    while running:
+        if not emulator:
+            time.sleep(0.01)
+            continue
+        
+        # Ensure we have an initial screenshot before starting the main loop
+        if current_obs is None:
+            screenshot = emulator.get_screenshot()
+            if screenshot:
+                with obs_lock:
+                    current_obs = np.array(screenshot)
+                print("📸 Initial screenshot captured for background loop")
+            else:
+                time.sleep(0.01)
+                continue
+        
+        break
+    
+    # Main emulator loop
     while running:
         if not emulator:
             time.sleep(0.01)
@@ -384,54 +497,80 @@ def background_emulator_loop():
         actions_to_execute = []
         agent_step_needed = False
         
-        # Get queued actions
+        # Get queued manual actions
+        manual_actions = []
         with action_lock:
-            actions_to_execute = current_actions.copy() if current_actions else []
+            manual_actions = current_actions.copy() if current_actions else []
             agent_step_needed = pending_agent_action
             current_actions = []
             pending_agent_action = False
         
-        # Handle agent step
-        if agent_step_needed:
-            if agent_modules:
-                print("🤖 Agent thinking...")
-                try:
-                    # Clear cache to ensure fresh map data for agent
-                    if hasattr(emulator, '_cached_state'):
-                        delattr(emulator, '_cached_state')
-                    if hasattr(emulator, '_cached_state_time'):
-                        delattr(emulator, '_cached_state_time')
-                    
-                    game_state = emulator.get_comprehensive_state()
-                    agent_action = agent_modules.process_game_state(game_state)
-                    
-                    if agent_action and "action" in agent_action:
-                        button_action = agent_action["action"]
-                        print(f"🎮 Agent chose: {button_action}")
-                        last_agent_action = agent_action
-                        actions_to_execute = [button_action]
-                    else:
-                        print("❌ Agent failed to choose action")
-                except Exception as e:
-                    print(f"❌ Agent error: {e}")
+        # Handle button press timing state machine
+        if manual_actions:
+            # Manual actions bypass timing (for immediate response)
+            actions_to_execute = manual_actions
+            # Clear any pending button states
+            current_button = None
+            button_hold_frames = 0
+            button_release_frames = 0
+        elif current_button:
+            # We're currently holding a button
+            if button_hold_frames > 0:
+                # Continue holding the button
+                actions_to_execute = [current_button]
+                button_hold_frames -= 1
             else:
-                print("❌ Agent not initialized")
+                # Release the button and start delay
+                actions_to_execute = []  # No buttons pressed
+                current_button = None
+                button_release_frames = BUTTON_RELEASE_DELAY
+        elif button_release_frames > 0:
+            # We're in the delay period after releasing a button
+            actions_to_execute = []  # No buttons pressed
+            button_release_frames -= 1
+        else:
+            # Ready for a new button press - check for agent results
+            if agent_result_queue:
+                agent_action = agent_result_queue.pop(0)
+                if agent_action and "action" in agent_action:
+                    button_action = agent_action["action"]
+                    print(f"🎮 Agent button press: {button_action}")
+                    last_agent_action = agent_action
+                    # Start holding the new button
+                    current_button = button_action
+                    button_hold_frames = BUTTON_HOLD_DURATION
+                    actions_to_execute = [button_action]
+                    # Store remaining actions if this was from a sequence
+                    if "remaining_actions" in agent_action:
+                        # Queue remaining actions for next frames
+                        for action in agent_action["remaining_actions"]:
+                            agent_result_queue.append({"action": action, "reasoning": "Continued sequence"})
+                else:
+                    print(f"❌ Invalid agent result: {agent_action}")
+                    actions_to_execute = []
+            else:
+                # No new actions, just run empty frame
+                actions_to_execute = []
         
-        # In agent mode, automatically let agent act
-        if agent_mode and not agent_step_needed and agent_modules and not agent_modules.thinking:
-            # Agent mode: automatically trigger agent action if no manual actions
-            if not actions_to_execute and int(time.time()) % 2 == 0 and int(time.time() * 10) % 10 == 0:  # Agent acts every 2 seconds
-                try:
-                    game_state = emulator.get_comprehensive_state()
-                    agent_action = agent_modules.process_game_state(game_state)
-                    
-                    if agent_action and "action" in agent_action:
-                        button_action = agent_action["action"]
-                        actions_to_execute = [button_action]
-                        last_agent_action = agent_action
-                        print(f"🤖 Auto agent chose: {button_action}")
-                except Exception as e:
-                    print(f"❌ Auto agent error: {e}")
+        # Handle manual agent step requests
+        if agent_step_needed:
+            print("🤖 Manual agent step requested")
+            queue_agent_step()
+        
+        # In agent mode, automatically let agent act (when --agent-auto flag is used)
+        if (agent_mode and not agent_step_needed and agent_modules and agent_auto_enabled):
+            # Agent auto mode: automatically trigger agent action if no manual actions
+            current_time = time.time()
+            agent_not_processing = len(agent_processing_queue) == 0  # Check if agent is not already processing
+            
+            if (not actions_to_execute and agent_not_processing and
+                (not hasattr(emulator, '_last_agent_action_time') or 
+                current_time - emulator._last_agent_action_time >= 2.0)):  # Agent acts every 2 seconds
+                
+                # Trigger async agent processing to avoid blocking emulator loop
+                emulator._last_agent_action_time = current_time
+                print("🤖 Auto agent triggered - starting async processing...")
+                queue_agent_step()
         
         # Run frame with actions (or no actions)
         emulator.run_frame_with_buttons(actions_to_execute)
@@ -441,6 +580,15 @@ def background_emulator_loop():
         if screenshot:
             with obs_lock:
                 current_obs = np.array(screenshot)
+        else:
+            # Debug: Log when screenshot is None
+            if hasattr(emulator, '_screenshot_fail_count'):
+                emulator._screenshot_fail_count += 1
+                if emulator._screenshot_fail_count % 60 == 0:  # Log every second
+                    print(f"⚠️  Screenshot is None (fail count: {emulator._screenshot_fail_count})")
+            else:
+                emulator._screenshot_fail_count = 1
+                print("⚠️  First screenshot failure")
         
         # Cache game state and broadcast updates periodically
         current_time = time.time()
@@ -488,16 +636,33 @@ def update_display():
         obs_surface = pygame.surfarray.make_surface(obs_copy.swapaxes(0, 1))
         scaled_surface = pygame.transform.scale(obs_surface, (screen_width, screen_height))
         screen.blit(scaled_surface, (0, 0))
+    else:
+        # Fill with black if no screenshot available and add debug text
+        screen.fill((0, 0, 0))
+        if font and step_count % 30 == 0:  # Debug message every second
+            debug_text = font.render("No screenshot available", True, (255, 255, 255))
+            screen.blit(debug_text, (10, 10))
         
         # Draw info overlay
         if font:
             mode_text = "AGENT" if agent_mode else "MANUAL"
-            auto_text = " (AUTO)" if agent_auto_enabled else ""
+            
+            # Create clearer status display
+            if agent_mode and agent_auto_enabled:
+                status_text = "AGENT (AUTO)"
+                control_info = "Agent acts automatically"
+            elif agent_mode and not agent_auto_enabled:
+                status_text = "AGENT (MANUAL)"
+                control_info = "Press Space for agent action"
+            else:
+                status_text = "MANUAL"
+                control_info = "Keyboard controls active"
             
             info_lines = [
-                f"Step: {step_count} | Mode: {mode_text}{auto_text}",
+                f"Step: {step_count} | Mode: {status_text}",
+                f"Status: {control_info}",
                 f"Controls: WASD/Arrows=Move, Z=A, X=B, Space=Agent Step",
-                f"Special: Tab=Mode, A=Auto, S=Screenshot, M=Map, 1=Save, 2=Load, Esc=Quit"
+                f"Special: Tab=Agent/Manual, A=Auto On/Off, S=Screenshot, M=Map, Esc=Quit"
             ]
             
             if agent_modules:
@@ -650,11 +815,8 @@ def game_loop(manual_mode=True, agent_auto=False):
         if not should_continue:
             break
         
-        # Auto agent mode
-        if agent_auto and agent_modules and time.time() - last_agent_time > agent_interval:
-            if not agent_modules.thinking:  # Don't interrupt if agent is thinking
-                actions_pressed.append("AGENT_STEP")
-                last_agent_time = time.time()
+        # Auto agent mode is now handled by background_emulator_loop
+        # This avoids conflicts between two different auto-agent mechanisms
         
         # Queue actions for background emulator loop
         if actions_pressed:
@@ -827,8 +989,8 @@ def main():
     parser = argparse.ArgumentParser(description="Direct Agent Pokemon Emerald")
     parser.add_argument("--rom", type=str, default="Emerald-GBAdvance/rom.gba", help="Path to ROM file")
     parser.add_argument("--load-state", type=str, help="Load a saved state file on startup")
-    parser.add_argument("--backend", type=str, default="openai", help="VLM backend (openai, gemini, local)")
-    parser.add_argument("--model-name", type=str, default="gpt-4o", help="Model name to use")
+    parser.add_argument("--backend", type=str, default="gemini", help="VLM backend (openai, gemini, local)")
+    parser.add_argument("--model-name", type=str, default="gemini-2.5-flash", help="Model name to use")
     parser.add_argument("--port", type=int, default=8000, help="Port for web interface")
     parser.add_argument("--no-display", action="store_true", help="Run without pygame display")
     parser.add_argument("--agent-auto", action="store_true", help="Agent acts automatically")
@@ -870,6 +1032,14 @@ def main():
     if not setup_agent(args.backend, args.model_name):
         print("Failed to initialize agent")
         return 1
+    
+    # Start agent processing thread
+    global agent_processing_thread
+    agent_processing_thread = threading.Thread(
+        target=agent_processing_worker, 
+        daemon=True
+    )
+    agent_processing_thread.start()
     
     # Start web server in background thread
     server_thread = threading.Thread(

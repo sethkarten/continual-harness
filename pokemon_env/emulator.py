@@ -374,6 +374,11 @@ class EmeraldEmulator:
         # Update dialog state cache for FPS adjustment
         self._update_dialog_state_cache()
         
+        # Clear dialogue cache if A button was pressed (dismisses dialogue)
+        if buttons and any(button.lower() == 'a' for button in buttons):
+            if self.memory_reader:
+                self.memory_reader.clear_dialogue_cache_on_button_press()
+        
         # Clear state cache after action to ensure fresh data
         if hasattr(self, '_cached_state'):
             delattr(self, '_cached_state')

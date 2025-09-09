@@ -632,16 +632,13 @@ def _format_game_state(game_data):
         dialog_text = game_data.get('dialog_text')
         dialogue_detected = game_data.get('dialogue_detected', {})
         
-        if dialog_text:
-            if dialogue_detected.get('has_dialogue', True):
-                context_parts.append(f"\n--- DIALOGUE ---")
-                if dialogue_detected.get('confidence') is not None:
-                    context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
-                context_parts.append(f"Text: {dialog_text}")
-            else:
-                # Dialogue text exists in memory but not visible on screen
-                context_parts.append(f"\n--- RESIDUAL TEXT (not visible) ---")
-                context_parts.append(f"Memory text: {dialog_text[:100]}...")
+        if dialog_text and dialogue_detected.get('has_dialogue', False):
+            # Only show dialogue if it's actually visible and active
+            context_parts.append(f"\n--- DIALOGUE ---")
+            if dialogue_detected.get('confidence') is not None:
+                context_parts.append(f"Detection confidence: {dialogue_detected['confidence']:.1%}")
+            context_parts.append(f"Text: {dialog_text}")
+            # Note: Residual/invisible dialogue text is completely hidden from agent
     
     if 'game_state' in game_data:
         context_parts.append(f"Game State: {game_data['game_state']}")
@@ -740,14 +737,16 @@ def get_party_health_summary(state_data):
         if pokemon:
             hp = pokemon.get('current_hp', 0)
             max_hp = pokemon.get('max_hp', 1)
-            status = pokemon.get('status', 'Normal')
+            status = pokemon.get('status', 'OK')
             species = pokemon.get('species_name', pokemon.get('species', 'Unknown Pokemon'))
             
-            if hp > 0 and status == 'Normal':
+            # Check if healthy: has HP and no negative status (OK or Normal are both healthy)
+            if hp > 0 and status in ['OK', 'Normal']:
                 healthy_count += 1
             
             hp_percent = (hp / max_hp * 100) if max_hp > 0 else 0
-            if hp_percent < 25 or status != 'Normal':
+            # Mark as critical if low HP or has a status condition
+            if hp_percent < 25 or status not in ['OK', 'Normal']:
                 critical_pokemon.append(f"{species} ({hp_percent:.0f}% HP, {status})")
     
     return {

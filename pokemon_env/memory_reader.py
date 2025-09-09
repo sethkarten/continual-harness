@@ -95,9 +95,19 @@ class MemoryAddresses:
     BATTLE_FLAGS = 0x02023E8A
     BATTLE_TURN = 0x02023E8C
     
-    # Battle detection addresses (for debug endpoint)
-    IN_BATTLE_BIT_ADDR = 0x030026F9
+    # Enhanced battle detection addresses (following pokeemerald guide)
+    IN_BATTLE_BIT_ADDR = 0x030026F9  # gMain.inBattle location
     IN_BATTLE_BITMASK = 0x02
+    BATTLE_TYPE_FLAGS = 0x02022AAE  # gBattleTypeFlags for detailed battle characteristics
+    BATTLE_COMMUNICATION = 0x02024A60  # gBattleCommunication array for battle phases
+    
+    # Enhanced dialogue/script detection addresses (following pokeemerald guide)
+    SCRIPT_CONTEXT_GLOBAL = 0x02037A58    # sGlobalScriptContext
+    SCRIPT_CONTEXT_IMMEDIATE = 0x02037A6C # sImmediateScriptContext  
+    SCRIPT_MODE_OFFSET = 0x00            # Mode offset within ScriptContext
+    SCRIPT_STATUS_OFFSET = 0x02          # Status offset within ScriptContext
+    MSG_IS_SIGNPOST = 0x020370BC         # gMsgIsSignPost
+    MSG_BOX_CANCELABLE = 0x020370BD      # gMsgBoxIsCancelable
     
     # Map layout addresses
     MAP_HEADER = 0x02037318
@@ -217,8 +227,59 @@ class PokemonEmeraldReader:
         self._dialog_fps_start_time = None
         self._dialog_fps_duration = 5.0  # Run at 120 FPS for 5 seconds when dialog detected
         
+        # Recent dialogue cache system to prevent residual text issues
+        self._dialogue_cache = {
+            'text': None,
+            'timestamp': None,
+            'is_active': False,
+            'detection_result': False
+        }
+        self._dialogue_cache_timeout = 3.0  # Clear dialogue cache after 3 seconds of inactivity
+        
+        # Warning rate limiter to prevent spam
+        self._warning_cache = {}
+        self._warning_rate_limit = 10.0  # Only show same warning once per 10 seconds
+        
+        # Track A button presses to prevent dialogue cache repopulation
+        self._a_button_pressed_time = 0.0
+        
     def _invalidate_mem_cache(self):
         self._mem_cache = {}
+    
+    def _rate_limited_warning(self, message, category="general"):
+        """
+        Log a warning message with rate limiting to prevent spam.
+        
+        Args:
+            message: The warning message to log
+            category: Category for grouping similar warnings (optional)
+        """
+        import time
+        current_time = time.time()
+        
+        # Create a key for this warning category
+        warning_key = f"{category}:{message}"
+        
+        # Check if we've warned about this recently
+        if warning_key in self._warning_cache:
+            last_warning_time = self._warning_cache[warning_key]
+            if current_time - last_warning_time < self._warning_rate_limit:
+                # Too recent, skip this warning
+                return
+        
+        # Log the warning and update cache
+        logger.warning(message)
+        self._warning_cache[warning_key] = current_time
+        
+        # Clean up old warnings from cache (optional optimization)
+        if len(self._warning_cache) > 50:  # Prevent unbounded growth
+            # Remove warnings older than rate limit
+            expired_keys = [
+                key for key, timestamp in self._warning_cache.items()
+                if current_time - timestamp > self._warning_rate_limit * 2
+            ]
+            for key in expired_keys:
+                del self._warning_cache[key]
 
     def _read_u8(self, address: int):
         return int.from_bytes(self.read_memory(address, 1), byteorder='little', signed=False)
@@ -248,7 +309,7 @@ class PokemonEmeraldReader:
         try:
             base_pointer = self._read_u32(self.addresses.SECURITY_KEY_POINTER)
             if base_pointer == 0:
-                logger.warning("Security key base pointer is null")
+                self._rate_limited_warning("Security key base pointer is null", "security_pointer")
                 return 0
             
             security_key_addr = base_pointer + self.addresses.SECURITY_KEY_OFFSET
@@ -289,7 +350,7 @@ class PokemonEmeraldReader:
             # Get SaveBlock2 pointer
             save_block_2_ptr = self._read_u32(self.addresses.SAVE_BLOCK2_PTR)
             if save_block_2_ptr == 0:
-                logger.warning("SaveBlock2 pointer is null")
+                self._rate_limited_warning("SaveBlock2 pointer is null", "saveblock_pointer")
                 return "Player"
             
             # Player name is at the start of SaveBlock2 (7 bytes + 1 padding)
@@ -313,7 +374,7 @@ class PokemonEmeraldReader:
             # Read the base pointer from SAVESTATE_OBJECT_POINTER_ADDR
             base_pointer = self._read_u32(self.addresses.SAVESTATE_OBJECT_POINTER)
             if base_pointer == 0:
-                logger.warning("Player object base pointer is null")
+                self._rate_limited_warning("Player object base pointer is null", "player_pointer")
                 return 0
             
             # Calculate the actual address of the encrypted money value
@@ -325,7 +386,7 @@ class PokemonEmeraldReader:
             # Get the security key for decryption
             security_key = self._get_security_key()
             if security_key == 0:
-                logger.warning("Could not get security key for money decryption")
+                self._rate_limited_warning("Could not get security key for money decryption", "money_decrypt")
                 return 0
             
             # Decrypt the money value by XORing with the security key
@@ -388,7 +449,7 @@ class PokemonEmeraldReader:
                 except Exception as e:
                     logger.warning(f"Failed to read Pokemon at slot {i}: {e}")
         except Exception as e:
-            logger.warning(f"Failed to read party: {e}")
+            self._rate_limited_warning(f"Failed to read party: {e}", "party")
 
         return party
 
@@ -433,16 +494,32 @@ class PokemonEmeraldReader:
         return data[offset] | (data[offset + 1] << 8)
 
     def is_in_battle(self) -> bool:
-        """Check if player is in battle"""
+        """Check if player is in battle using enhanced pokeemerald-based detection"""
         try:
-            battle_flag = self._read_u8(self.addresses.IN_BATTLE_FLAG)
-            return (battle_flag & self.addresses.IN_BATTLE_MASK) != 0
+            # Primary check: gMain.inBattle flag (most reliable indicator)
+            main_in_battle = self._read_u8(self.addresses.IN_BATTLE_BIT_ADDR)
+            primary_battle_flag = (main_in_battle & self.addresses.IN_BATTLE_BITMASK) != 0
+            
+            if primary_battle_flag:
+                return True
+                
+            # Secondary validation: check battle type flags for additional battle states
+            try:
+                battle_type_flags = self._read_u16(self.addresses.BATTLE_TYPE_FLAGS)
+                # Any non-zero battle type flags indicate some form of battle
+                if battle_type_flags != 0:
+                    logger.debug(f"Battle detected via type flags: 0x{battle_type_flags:04X}")
+                    return True
+            except Exception:
+                pass  # Battle type flags check is supplementary
+                
+            return False
         except Exception as e:
             logger.warning(f"Failed to read battle state: {e}")
             return False
 
     def is_in_dialog(self) -> bool:
-        """Check if currently in dialog state using timeout-based approach"""
+        """Check if currently in dialog state using enhanced pokeemerald-based detection"""
         try:
             current_time = time.time()
             
@@ -457,7 +534,12 @@ class PokemonEmeraldReader:
             if self.is_in_battle():
                 return False
             
-            # Check dialog state flag and overworld_freeze - either can indicate dialog
+            # Enhanced script context detection (following pokeemerald guide)
+            dialog_detected = self._detect_script_context_dialog()
+            if dialog_detected:
+                return True
+            
+            # Fallback to original dialog state detection for compatibility
             dialog_state = self._read_u8(self.addresses.DIALOG_STATE)
             overworld_freeze = self._read_u8(0x02022B4C)
             
@@ -470,17 +552,24 @@ class PokemonEmeraldReader:
             has_meaningful_text = dialog_text and len(dialog_text.strip()) > 5
             
             if has_meaningful_text:
-                # Additional check: make sure this isn't just residual battle text
-                # Battle escape messages and other battle-related text shouldn't trigger dialog FPS
+                # Enhanced residual text filtering (expanded from battle text)
                 cleaned_text = dialog_text.strip().lower()
-                battle_indicators = [
+                residual_indicators = [
                     "got away safely", "fled", "escape", "battle", "wild", "trainer",
-                    "used", "attack", "defend", "missed", "critical", "super effective"
+                    "used", "attack", "defend", "missed", "critical", "super effective",
+                    "fainted", "defeated", "victory", "experience points",
+                    "gained", "grew to", "learned", "ran away"
                 ]
                 
-                # If the text contains battle indicators, it's likely residual battle text
-                if any(indicator in cleaned_text for indicator in battle_indicators):
-                    logger.debug(f"Ignoring residual battle text: {dialog_text[:50]}...")
+                # If the text contains residual indicators, it's likely old text
+                if any(indicator in cleaned_text for indicator in residual_indicators):
+                    logger.debug(f"Original detection: Ignoring residual text: {dialog_text[:50]}...")
+                    return False
+                
+                # Additional validation: check if dialog_state value is reasonable
+                # 0xFF (255) often indicates uninitialized/corrupted state
+                if dialog_state == 0xFF:
+                    logger.debug(f"Original detection: Ignoring corrupted dialog_state=0xFF")
                     return False
                 
                 # Check if this is new dialog content (different from last time)
@@ -538,11 +627,114 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to check dialog state: {e}")
             return False
 
+    def _update_dialogue_cache(self, dialog_text, is_active_dialogue):
+        """
+        Update the dialogue cache with current dialogue state.
+        Automatically clears old dialogue after timeout.
+        
+        Args:
+            dialog_text: Current dialogue text from memory
+            is_active_dialogue: Whether dialogue detection is currently active
+        """
+        import time
+        current_time = time.time()
+        
+        # If A button was recently pressed (within 1 second), ignore any residual text
+        if hasattr(self, '_a_button_pressed_time') and current_time - self._a_button_pressed_time < 1.0:
+            logger.debug(f"A button pressed recently ({current_time - self._a_button_pressed_time:.2f}s ago) - ignoring residual dialogue text")
+            return
+        
+        # Check if we need to clear expired cache
+        if (self._dialogue_cache['timestamp'] and 
+            current_time - self._dialogue_cache['timestamp'] > self._dialogue_cache_timeout):
+            logger.debug("Clearing expired dialogue cache")
+            self._dialogue_cache = {
+                'text': None,
+                'timestamp': None,
+                'is_active': False,
+                'detection_result': False
+            }
+        
+        # Update cache with current state
+        if dialog_text and is_active_dialogue:
+            # Active dialogue - update cache
+            self._dialogue_cache.update({
+                'text': dialog_text,
+                'timestamp': current_time,
+                'is_active': True,
+                'detection_result': True
+            })
+            logger.debug(f"Updated dialogue cache with active dialogue: {dialog_text[:50]}...")
+        elif dialog_text and not is_active_dialogue:
+            # Text exists but not active - likely residual
+            if not self._dialogue_cache['is_active'] or not self._dialogue_cache['text']:
+                # No recent active dialogue, treat as residual
+                self._dialogue_cache.update({
+                    'text': dialog_text,
+                    'timestamp': current_time,
+                    'is_active': False,
+                    'detection_result': False
+                })
+                logger.debug(f"Cached residual dialogue text: {dialog_text[:50]}...")
+        elif not dialog_text:
+            # No dialogue text - clear cache if it's old enough
+            if (self._dialogue_cache['timestamp'] and 
+                current_time - self._dialogue_cache['timestamp'] > 1.0):  # 1 second grace period
+                logger.debug("Clearing dialogue cache - no text found")
+                self._dialogue_cache['is_active'] = False
+                self._dialogue_cache['detection_result'] = False
+    
+    def get_cached_dialogue_state(self):
+        """Get current cached dialogue state, respecting timeout."""
+        import time
+        current_time = time.time()
+        
+        # Return False if cache is expired
+        if (self._dialogue_cache['timestamp'] and 
+            current_time - self._dialogue_cache['timestamp'] > self._dialogue_cache_timeout):
+            return False, None
+        
+        return self._dialogue_cache['detection_result'], self._dialogue_cache['text']
+    
+    def clear_dialogue_cache_on_button_press(self):
+        """
+        Clear dialogue cache when A button is pressed (dismisses dialogue).
+        This prevents false positive dialogue detection after dialogue is dismissed.
+        """
+        import time
+        current_time = time.time()
+        
+        logger.debug("A button pressed - clearing dialogue cache to prevent false positives")
+        
+        # Force clear dialogue cache
+        self._dialogue_cache = {
+            'text': None,
+            'timestamp': current_time,
+            'is_active': False,
+            'detection_result': False
+        }
+        
+        # Also clear old dialog tracking
+        self._last_dialog_content = None
+        self._dialog_fps_start_time = None
+        self._dialog_text_start_time = None
+        
+        # Mark that A button was recently pressed to prevent cache repopulation
+        self._a_button_pressed_time = current_time
+
     def reset_dialog_tracking(self):
         """Reset dialog tracking state"""
         self._last_dialog_content = None
         self._dialog_fps_start_time = None
         self._dialog_text_start_time = None
+        
+        # Reset dialogue cache as well
+        self._dialogue_cache = {
+            'text': None,
+            'timestamp': None,
+            'is_active': False,
+            'detection_result': False
+        }
 
     def invalidate_map_cache(self):
         """Invalidate map-related caches when transitioning between areas"""
@@ -598,6 +790,70 @@ class PokemonEmeraldReader:
             # Don't let area transition check failures break map reading
             
         return False
+    
+    def _detect_script_context_dialog(self) -> bool:
+        """
+        Detect dialog state using pokeemerald script context analysis.
+        
+        Enhanced with residual text filtering to prevent false positives.
+        """
+        try:
+            # First check for residual battle/escape text that should be ignored
+            dialog_text = self.read_dialog()
+            if dialog_text:
+                cleaned_text = dialog_text.strip().lower()
+                residual_indicators = [
+                    "got away safely", "fled from", "escaped", "ran away",
+                    "fainted", "defeated", "victory", "experience points",
+                    "gained", "grew to", "learned"
+                ]
+                if any(indicator in cleaned_text for indicator in residual_indicators):
+                    logger.debug(f"Enhanced detection: Ignoring residual text: '{dialog_text[:30]}...'")
+                    return False
+            
+            # Check global script context
+            global_mode = self._read_u8(self.addresses.SCRIPT_CONTEXT_GLOBAL + self.addresses.SCRIPT_MODE_OFFSET)
+            global_status = self._read_u8(self.addresses.SCRIPT_CONTEXT_GLOBAL + self.addresses.SCRIPT_STATUS_OFFSET)
+            
+            # Check immediate script context  
+            immediate_mode = self._read_u8(self.addresses.SCRIPT_CONTEXT_IMMEDIATE + self.addresses.SCRIPT_MODE_OFFSET)
+            immediate_status = self._read_u8(self.addresses.SCRIPT_CONTEXT_IMMEDIATE + self.addresses.SCRIPT_STATUS_OFFSET)
+            
+            # Script execution modes from pokeemerald:
+            # SCRIPT_MODE_STOPPED = 0, SCRIPT_MODE_BYTECODE = 1, SCRIPT_MODE_NATIVE = 2
+            # Context status: CONTEXT_RUNNING = 0, CONTEXT_WAITING = 1, CONTEXT_SHUTDOWN = 2
+            
+            # Enhanced validation: Only consider it dialog if script modes are reasonable values
+            # Extremely high values (like 221) are likely corrupted/persistent state data
+            if global_mode >= 1 and global_mode <= 10:  # Reasonable script mode range
+                logger.debug(f"Script dialog detected: global_mode={global_mode}")
+                return True
+            
+            if immediate_mode >= 1 and immediate_mode <= 10:  # Reasonable script mode range
+                logger.debug(f"Script dialog detected: immediate_mode={immediate_mode}")
+                return True
+            
+            # Check message box state indicators with validation
+            try:
+                is_signpost = self._read_u8(self.addresses.MSG_IS_SIGNPOST)
+                box_cancelable = self._read_u8(self.addresses.MSG_BOX_CANCELABLE)
+                
+                # Only consider valid if values are reasonable (not 0xFF which indicates uninitialized)
+                if (is_signpost != 0 and is_signpost != 0xFF and is_signpost <= 10):
+                    logger.debug(f"Message box dialog detected: signpost={is_signpost}")
+                    return True
+                    
+                if (box_cancelable != 0 and box_cancelable != 0xFF and box_cancelable <= 10):
+                    logger.debug(f"Message box dialog detected: cancelable={box_cancelable}")
+                    return True
+            except Exception:
+                pass  # Message box checks are supplementary
+                
+            return False
+            
+        except Exception as e:
+            logger.debug(f"Script context dialog detection failed: {e}")
+            return False
     
     def _validate_map_data(self, map_data, location_name=""):
         """Validate that map data looks reasonable based on location and structure"""
@@ -712,7 +968,7 @@ class PokemonEmeraldReader:
             base_address = self._read_u32(self.addresses.SAVESTATE_OBJECT_POINTER)
             
             if base_address == 0:
-                logger.warning("Could not read savestate object pointer")
+                self._rate_limited_warning("Could not read savestate object pointer", "savestate_pointer")
                 return (0, 0)
             
             # Read coordinates from the savestate object
@@ -720,7 +976,7 @@ class PokemonEmeraldReader:
             y = self._read_u16(base_address + self.addresses.SAVESTATE_PLAYER_Y_OFFSET)
             return (x, y)
         except Exception as e:
-            logger.warning(f"Failed to read coordinates: {e}")
+            self._rate_limited_warning(f"Failed to read coordinates: {e}", "coordinates")
             return (0, 0)
 
     def read_player_facing(self) -> str:
@@ -730,7 +986,7 @@ class PokemonEmeraldReader:
             base_address = self._read_u32(self.addresses.SAVESTATE_OBJECT_POINTER)
             
             if base_address == 0:
-                logger.warning("Could not read savestate object pointer")
+                self._rate_limited_warning("Could not read savestate object pointer", "savestate_pointer")
                 return "Unknown direction"
             
             # Read facing direction from the savestate object
@@ -741,7 +997,7 @@ class PokemonEmeraldReader:
             if 0 <= facing_value < len(directions):
                 return directions[facing_value]
             else:
-                logger.warning(f"Invalid facing direction value: {facing_value}")
+                self._rate_limited_warning(f"Invalid facing direction value: {facing_value}", "facing_direction")
                 return "Unknown direction"
         except Exception as e:
             logger.warning(f"Failed to read player facing direction: {e}")
@@ -874,8 +1130,10 @@ class PokemonEmeraldReader:
             if menu_state != 0:
                 return "menu"
             
-            # Check for dialog using the same timeout logic as is_in_dialog()
-            if self.is_in_dialog():
+            # Check for dialog but respect A button clearing
+            # Use cached dialogue state if available, otherwise fall back to detection
+            cached_active, _ = self.get_cached_dialogue_state()
+            if cached_active:
                 return "dialog"
             
             return "overworld"
@@ -884,11 +1142,12 @@ class PokemonEmeraldReader:
             return "unknown"
 
     def read_battle_details(self) -> Dict[str, Any]:
-        """Read battle-specific information"""
+        """Read enhanced battle-specific information following pokeemerald guide"""
         try:
             if not self.is_in_battle():
                 return None
             
+            # Basic battle type detection
             battle_type_value = self._read_u8(self.addresses.BATTLE_TYPE)
             battle_type = "unknown"
             
@@ -897,16 +1156,53 @@ class PokemonEmeraldReader:
             elif 1 <= battle_type_value <= 4:
                 battle_type = "trainer"
             
-            return {
+            # Enhanced battle characteristics from gBattleTypeFlags
+            battle_details = {
                 "in_battle": True,
                 "battle_type": battle_type,
                 "battle_type_raw": battle_type_value,
                 "can_escape": battle_type == "wild",
             }
             
+            # Read detailed battle type flags (following pokeemerald guide)
+            try:
+                battle_type_flags = self._read_u16(self.addresses.BATTLE_TYPE_FLAGS)
+                battle_details.update({
+                    "battle_type_flags": battle_type_flags,
+                    "is_trainer_battle": bool(battle_type_flags & 0x01),    # BATTLE_TYPE_TRAINER
+                    "is_wild_battle": not bool(battle_type_flags & 0x01),
+                    "is_double_battle": bool(battle_type_flags & 0x02),     # BATTLE_TYPE_DOUBLE
+                    "is_multi_battle": bool(battle_type_flags & 0x20),      # BATTLE_TYPE_MULTI
+                    "is_frontier_battle": bool(battle_type_flags & 0x400),  # BATTLE_TYPE_FRONTIER
+                })
+            except Exception:
+                pass  # Battle type flags are supplementary
+            
+            # Read battle communication state for detailed battle phases
+            try:
+                comm_state = self._read_u8(self.addresses.BATTLE_COMMUNICATION)
+                battle_details["battle_phase"] = comm_state
+                battle_details["battle_phase_name"] = self._get_battle_phase_name(comm_state)
+            except Exception:
+                pass  # Battle communication is supplementary
+                
+            return battle_details
+            
         except Exception as e:
             logger.warning(f"Failed to read battle details: {e}")
             return {"in_battle": True, "battle_type": "unknown", "error": str(e)}
+    
+    def _get_battle_phase_name(self, phase: int) -> str:
+        """Convert battle communication phase to readable name"""
+        phase_names = {
+            0: "initialization",
+            1: "turn_start", 
+            2: "action_selection",
+            3: "action_execution",
+            4: "turn_end",
+            5: "battle_end"
+        }
+        return phase_names.get(phase, f"phase_{phase}")
 
     # Map reading methods (keeping existing implementation for now)
     def _validate_buffer_data(self, buffer_addr, width, height):
@@ -1004,7 +1300,7 @@ class PokemonEmeraldReader:
             delattr(self, '_fallback_buffer')
             return True
         
-        logger.warning("Could not find valid map buffer addresses")
+        self._rate_limited_warning("Could not find valid map buffer addresses", "map_buffer")
         return False
     
     def _find_alternative_buffer(self):
@@ -1130,7 +1426,7 @@ class PokemonEmeraldReader:
         # Always ensure map buffer is found
         if not self._map_buffer_addr:
             if not self._find_map_buffer_addresses():
-                logger.warning("Failed to find map buffer addresses, returning empty map")
+                self._rate_limited_warning("Failed to find map buffer addresses, returning empty map", "map_buffer")
                 return []
         
         # Read map data with simple validation and retry
@@ -1149,16 +1445,8 @@ class PokemonEmeraldReader:
                     current_width <= 0 or current_height <= 0 or
                     current_width > 1000 or current_height > 1000):
                     
-                    # Rate limit corruption warnings to avoid spam
-                    current_time = time.time()
-                    if not hasattr(self, '_last_corruption_warning'):
-                        self._last_corruption_warning = 0
-                    
-                    if current_time - self._last_corruption_warning > 5.0:  # Max 1 warning per 5 seconds
-                        logger.warning(f"Map buffer corruption detected: dimensions changed from {self._map_width}x{self._map_height} to {current_width}x{current_height}")
-                        self._last_corruption_warning = current_time
-                    else:
-                        logger.debug(f"Map buffer corruption (suppressed): {self._map_width}x{self._map_height} -> {current_width}x{current_height}")
+                    # Use unified rate limiter for corruption warnings
+                    self._rate_limited_warning(f"Map buffer corruption detected: dimensions changed from {self._map_width}x{self._map_height} to {current_width}x{current_height}", "map_corruption")
                     
                     self._map_buffer_addr = None
                     self._map_width = None
@@ -1221,7 +1509,7 @@ class PokemonEmeraldReader:
             # Always try to find map buffer addresses if not already found
             if not self._map_buffer_addr:
                 if not self._find_map_buffer_addresses():
-                    logger.warning("Failed to find map buffer addresses, returning empty map")
+                    self._rate_limited_warning("Failed to find map buffer addresses, returning empty map", "map_buffer")
                     return []
             
             # Try to read the map data
@@ -1319,7 +1607,7 @@ class PokemonEmeraldReader:
     def read_map_metatiles(self, x_start: int = 0, y_start: int = 0, width: int = None, height: int = None) -> List[List[Tuple[int, MetatileBehavior, int, int]]]:
         """Read map metatiles with improved error handling"""
         if not self._map_buffer_addr:
-            logger.warning("No map buffer address available")
+            self._rate_limited_warning("No map buffer address available", "map_buffer")
             return []
         
         if width is None:
@@ -1550,6 +1838,31 @@ class PokemonEmeraldReader:
             else:
                 logger.debug("No dialog text found in memory buffers")
             
+            # Dialogue detection result - determines if dialogue should be shown to LLM
+            dialogue_active = self.is_in_dialog()
+            
+            # Update dialogue cache with current state
+            self._update_dialogue_cache(dialog_text, dialogue_active)
+            
+            # Use cached dialogue state for additional validation
+            cached_active, cached_text = self.get_cached_dialogue_state()
+            
+            # Final dialogue state combines detection and cache validation
+            final_dialogue_active = dialogue_active and cached_active
+            
+            state["game"]["dialogue_detected"] = {
+                "has_dialogue": final_dialogue_active,
+                "confidence": 1.0 if final_dialogue_active else 0.0,
+                "reason": "enhanced pokeemerald detection with cache validation"
+            }
+            logger.debug(f"Dialogue detection: {dialogue_active}, cached: {cached_active}, final: {final_dialogue_active}")
+            
+            # Update game_state to reflect the current dialogue cache state
+            # This ensures game_state is 'overworld' when dialogue is dismissed by A button
+            if not final_dialogue_active and state["game"]["game_state"] == "dialog":
+                state["game"]["game_state"] = "overworld"
+                logger.debug("Updated game_state from 'dialog' to 'overworld' after dialogue cache validation")
+            
             # Game progress context
             progress_context = self.get_game_progress_context()
             if progress_context:
@@ -1578,7 +1891,7 @@ class PokemonEmeraldReader:
                 logger.info(f"Added {len(state['player']['party'])} Pokemon to state")
                 logger.info(f"Final state party: {state['player']['party']}")
             else:
-                logger.warning("No Pokemon found in party")
+                self._rate_limited_warning("No Pokemon found in party", "party_empty")
         
                 
         except Exception as e:
@@ -1859,7 +2172,7 @@ class PokemonEmeraldReader:
             # Get SaveBlock1 pointer
             save_block_1_ptr = self._read_u32(self.addresses.SAVE_BLOCK1_PTR)
             if save_block_1_ptr == 0:
-                logger.warning("SaveBlock1 pointer is null")
+                self._rate_limited_warning("SaveBlock1 pointer is null", "saveblock_pointer")
                 return {}
             
             # Read flags from SaveBlock1
@@ -1962,7 +2275,7 @@ class PokemonEmeraldReader:
             # Get player position 
             player_coords = self.read_coordinates()
             if not player_coords:
-                logger.warning("Could not read player coordinates for NPC search")
+                self._rate_limited_warning("Could not read player coordinates for NPC search", "coordinates")
                 return []
             
             player_x, player_y = player_coords
