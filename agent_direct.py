@@ -45,7 +45,7 @@ agent_modules = None
 running = True
 step_count = 0
 current_obs = None
-fps = 60
+fps = 120
 agent_thinking = False
 last_agent_action = None
 agent_mode = True   # True = agent (default), False = manual
@@ -297,7 +297,7 @@ async def broadcast_state_update():
                 "game": last_game_state.get("game", {}),
                 "party": party_data,
                 "map": last_game_state.get("map", {}),
-                "location": last_game_state.get("map", {}).get("current_location", "Unknown"),
+                "location": last_game_state.get("player", {}).get("location", "Unknown"),
                 "agent_mode": agent_mode,
                 "agent_auto": agent_auto_enabled,
                 "agent": agent_status,
@@ -371,7 +371,7 @@ def setup_emulator(rom_path="Emerald-GBAdvance/rom.gba", load_state=None):
             state = emulator.get_comprehensive_state()
             player_info = state.get("player", {})
             print(f"📍 Player: {player_info.get('name', 'Unknown')} at ({player_info.get('map_x', '?')}, {player_info.get('map_y', '?')})")
-            print(f"🗺️  Map: {state.get('map', {}).get('current_location', 'Unknown')}")
+            print(f"🗺️  Map: {state.get('player', {}).get('location', 'Unknown')}")
         
         screenshot = emulator.get_screenshot()
         if screenshot:

@@ -1003,14 +1003,69 @@ class PokemonEmeraldReader:
             logger.warning(f"Failed to read player facing direction: {e}")
             return "Unknown direction"
 
+    def is_in_title_sequence(self) -> bool:
+        """Detect if we're in title sequence/intro before overworld"""
+        try:
+            # Check if player name is set - if not, likely in title/intro
+            player_name = self.read_player_name()
+            if not player_name or player_name.strip() == '':
+                return True
+                
+            
+            # Check if we have valid SaveBlock pointers
+            try:
+                saveblock1_ptr = self._read_u32(self.addresses.SAVE_BLOCK1_PTR)
+                saveblock2_ptr = self._read_u32(self.addresses.SAVE_BLOCK2_PTR)
+                
+                # If saveblocks aren't initialized, we're likely in title
+                if saveblock1_ptr == 0 or saveblock2_ptr == 0:
+                    return True
+                    
+            except:
+                return True
+                
+            # Check if map data looks invalid (like being at 0,0 in PETALBURG_CITY immediately)
+            map_bank = self._read_u8(self.addresses.MAP_BANK)
+            map_num = self._read_u8(self.addresses.MAP_NUMBER)
+            player_x = self._read_u16(self.addresses.PLAYER_X)
+            player_y = self._read_u16(self.addresses.PLAYER_Y)
+            
+            # If we're at position (0,0) in PETALBURG_CITY, this is likely incorrect title sequence data
+            if map_bank == 0 and map_num == 0 and player_x == 0 and player_y == 0:
+                return True
+                
+            return False
+            
+        except Exception:
+            # If we can't read memory properly, assume title sequence
+            return True
+
     def read_location(self) -> str:
         """Read current location"""
         try:
             map_bank = self._read_u8(self.addresses.MAP_BANK)
             map_num = self._read_u8(self.addresses.MAP_NUMBER)
+            map_id = (map_bank << 8) | map_num
+            
+            
+            # Check if we're in title sequence (no valid map data)
+            if self.is_in_title_sequence():
+                return "TITLE_SEQUENCE"
+            
+            # Special case: Battle Frontier Ranking Hall during intro (moving van)
+            # Distinguish by checking if this is early game (no party, no badges)
+            if map_id == 0x1928:  # BATTLE_FRONTIER_RANKING_HALL
+                try:
+                    party_size = self.read_party_size()
+                    badges = self.read_badges()
+                    # If no party and no badges, this is the moving van intro scene
+                    if party_size == 0 and len(badges) == 0:
+                        return "MOVING_VAN"
+                except:
+                    pass
             
             try:
-                location = MapLocation((map_bank << 8) | map_num)
+                location = MapLocation(map_id)
                 return location.name.replace('_', ' ')
             except ValueError:
                 return f"Map_{map_bank:02X}_{map_num:02X}"
@@ -1123,6 +1178,10 @@ class PokemonEmeraldReader:
     def get_game_state(self) -> str:
         """Get current game state"""
         try:
+            # Check for title sequence first
+            if self.is_in_title_sequence():
+                return "title"
+                
             if self.is_in_battle():
                 return "battle"
             
