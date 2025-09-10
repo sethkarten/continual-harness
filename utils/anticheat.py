@@ -34,14 +34,18 @@ class AntiCheatTracker:
         self.position_history = deque(maxlen=20)  # Track recent positions
         self.start_time = None  # Will be set when logging is initialized
         
-        # Set up submission logging
+        # Set up submission logging (avoid duplicate handlers)
         self.submission_logger = logging.getLogger('submission')
         self.submission_logger.setLevel(logging.INFO)
-        submission_handler = logging.FileHandler('submission.log', mode='w')
-        submission_formatter = logging.Formatter('%(message)s')
-        submission_handler.setFormatter(submission_formatter)
-        self.submission_logger.addHandler(submission_handler)
-        self.submission_logger.propagate = False
+        
+        # Only add handler if none exists
+        if not self.submission_logger.handlers:
+            submission_handler = logging.FileHandler('submission.log', mode='a')
+            submission_handler.setLevel(logging.INFO)  # Explicitly set handler level
+            submission_formatter = logging.Formatter('%(message)s')
+            submission_handler.setFormatter(submission_formatter)
+            self.submission_logger.addHandler(submission_handler)
+            self.submission_logger.propagate = False
     
     def create_state_hash(self, state_data):
         """
@@ -321,10 +325,19 @@ class AntiCheatTracker:
                     f"TIME_VAR={behavioral_metrics['decision_variance']}")
         
         self.submission_logger.info(log_entry)
+        
+        # Force flush to ensure immediate write
+        for handler in self.submission_logger.handlers:
+            handler.flush()
     
     def initialize_submission_log(self, model_name):
         """Initialize submission log with header information"""
         self.start_time = time.time()  # Store start time for total runtime calculation
+        
+        # Clear the file first by writing directly
+        with open('submission.log', 'w') as f:
+            f.write("")
+        
         self.submission_logger.info("=== POKEMON EMERALD AGENT SUBMISSION LOG ===")
         self.submission_logger.info(f"Model: {model_name} | Start Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         self.submission_logger.info("Format: STEP | POS | MAP | MILESTONE | STATE | MONEY | PARTY | ACTION | DECISION_TIME | RUNTIME | STATE_HASH | AVG_TIME | ERROR_RATE | EXPLORE_RATIO | BACKTRACK_RATIO | TIME_VAR")

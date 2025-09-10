@@ -34,6 +34,8 @@ from agent.action import action_step
 from utils.vlm import VLM
 from utils.state_formatter import format_state_for_llm
 from utils.map_formatter import format_map_for_display
+from utils.anticheat import AntiCheatTracker
+from utils.llm_logger import get_llm_logger
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -42,8 +44,11 @@ logger = logging.getLogger(__name__)
 # Global state
 emulator = None
 agent_modules = None
+anticheat_tracker = None  # Anti-cheat tracker for submission logging
+llm_logger = None  # LLM logger for tracking interactions
 running = True
-step_count = 0
+step_count = 0  # Display/frame counter
+agent_step_count = 0  # Actual agent decision counter
 current_obs = None
 fps = 120
 agent_thinking = False
@@ -499,11 +504,21 @@ def display_comprehensive_state():
 
 def setup_agent(backend="openai", model_name="gpt-4o"):
     """Initialize agent modules"""
-    global agent_modules
+    global agent_modules, anticheat_tracker, llm_logger
     
     try:
         agent_modules = AgentModules(backend=backend, model_name=model_name)
         print(f"Agent initialized with {backend} backend using {model_name}")
+        
+        # Initialize anti-cheat tracker for submission logging
+        anticheat_tracker = AntiCheatTracker()
+        anticheat_tracker.initialize_submission_log(model_name)
+        print(f"Submission logging initialized to submission.log")
+        
+        # Initialize LLM logger
+        llm_logger = get_llm_logger()
+        print(f"LLM interaction logging initialized")
+        
         return True
     except Exception as e:
         print(f"Failed to initialize agent: {e}")
@@ -598,7 +613,35 @@ def agent_processing_worker():
             
             try:
                 print("🤖 Agent processing started (async)...")
+                start_time = time.time()
                 agent_action = agent_modules.process_game_state(game_state)
+                decision_time = time.time() - start_time
+                
+                # Add decision time and original game state to the action result
+                if agent_action:
+                    agent_action["decision_time"] = decision_time
+                    agent_action["game_state"] = game_state  # Include the game state with hash
+                    
+                    # Log to submission.log for anti-cheat tracking
+                    if anticheat_tracker and game_state:
+                        try:
+                            current_agent_step = game_state.get("agent_step", agent_step_count)
+                            state_hash = game_state.get("state_hash", "unknown")
+                            action_taken = agent_action.get("action", "UNKNOWN")
+                            
+                            # Log to anti-cheat submission file
+                            anticheat_tracker.log_submission_data(
+                                step=current_agent_step,
+                                state_data=game_state,
+                                action_taken=action_taken,
+                                decision_time=decision_time,
+                                state_hash=state_hash
+                            )
+                            
+                        except Exception as e:
+                            print(f"❌ Submission logging error: {e}")
+                            import traceback
+                            traceback.print_exc()
                 
                 # Put result in result queue
                 agent_result_queue.append(agent_action)
@@ -616,14 +659,33 @@ def agent_processing_worker():
 
 def queue_agent_step():
     """Queue an agent step to be processed asynchronously"""
-    global agent_processing_queue, emulator
+    global agent_processing_queue, emulator, anticheat_tracker, llm_logger, agent_step_count
     
     if emulator and agent_modules:
+        # Increment agent step counter for this decision
+        agent_step_count += 1
+        
+        # Log step start
+        if llm_logger:
+            llm_logger.log_step_start(agent_step_count, "agent_step")
+        
         # Get current screenshot and use it for comprehensive state to ensure OCR uses latest frame
         screenshot = emulator.get_screenshot()
         game_state = emulator.get_comprehensive_state(screenshot)
+        
+        # Create state hash for integrity verification
+        if anticheat_tracker:
+            state_hash = anticheat_tracker.create_state_hash(game_state)
+            game_state["state_hash"] = state_hash
+            game_state["step_start_time"] = time.time()
+            game_state["agent_step"] = agent_step_count  # Store the agent step number
+            
+            # Log state snapshot
+            if llm_logger:
+                llm_logger.log_state_snapshot(game_state, agent_step_count)
+        
         agent_processing_queue.append(game_state)
-        print("📝 Agent step queued for async processing")
+        print(f"📝 Agent step {agent_step_count} queued for async processing")
     else:
         print("❌ Cannot queue agent step - emulator or agent not ready")
 
@@ -733,11 +795,20 @@ def background_emulator_loop():
                     current_button = button_action
                     button_hold_frames = BUTTON_HOLD_DURATION
                     actions_to_execute = [button_action]
+                    
+                    # Submission logging now happens in agent processing, not here
+                    
                     # Store remaining actions if this was from a sequence
                     if "remaining_actions" in agent_action:
-                        # Queue remaining actions for next frames
+                        # Queue remaining actions for next frames - preserve game_state for logging
                         for action in agent_action["remaining_actions"]:
-                            agent_result_queue.append({"action": action, "reasoning": "Continued sequence"})
+                            remaining_action = {
+                                "action": action, 
+                                "reasoning": "Continued sequence",
+                                "decision_time": agent_action.get("decision_time", 0.0),
+                                "game_state": agent_action.get("game_state")  # Preserve the game state
+                            }
+                            agent_result_queue.append(remaining_action)
                 else:
                     print(f"❌ Invalid agent result: {agent_action}")
                     actions_to_execute = []
@@ -1042,7 +1113,8 @@ def game_loop(manual_mode=True, agent_auto=False):
             step_count += 1
         
         # Display loop runs at 120 FPS to match emulator performance
-        clock.tick(display_fps)
+        if clock:  # Only tick if pygame was initialized
+            clock.tick(display_fps)
 
 def run_fastapi_server(port):
     """Run FastAPI server in background thread"""
