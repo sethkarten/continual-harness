@@ -1,0 +1,16 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1757465454.618093,
+      "first_completed": 1757465454.618093
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1757465626.2623758,
+      "first_completed": 1757465626.2623758
+    }
+  },
+  "last_updated": 1757465642.7069736,
+  "version": "1.0"
+}

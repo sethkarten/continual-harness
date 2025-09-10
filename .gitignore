@@ -5,6 +5,7 @@
 *.pem
 *.gba
 llm_log_*
+CLAUDE.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -180,3 +181,4 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+.vscode

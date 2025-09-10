@@ -1,0 +1,21 @@
+{
+  "milestones": {
+    "GAME_RUNNING": {
+      "completed": true,
+      "timestamp": 1754551143.255193,
+      "first_completed": 1754551143.255193
+    },
+    "EARNED_1000_POKEDOLLARS": {
+      "completed": true,
+      "timestamp": 1754551246.5548232,
+      "first_completed": 1754551246.5548232
+    },
+    "LITTLEROOT_TOWN": {
+      "completed": true,
+      "timestamp": 1754632289.5831544,
+      "first_completed": 1754632289.5831544
+    }
+  },
+  "last_updated": 1754632679.0739596,
+  "version": "1.0"
+}

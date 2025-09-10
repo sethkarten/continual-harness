@@ -58,7 +58,7 @@ emerald/
 ├── agent.py                 # Main AI agent implementation
 ├── server/
 │   ├── __init__.py
-│   ├── app.py               # Emulator server with FastAPI endpoints
+│   ├── stream.html          # Web interface for streaming
 │   ├── templates.py         # HTML templates for web interface
 │   └── simple_test.state    # Game state file
 ├── agent/                   # (EDIT THESE FILES TO CUSTOMIZE BEHAVIOR)
@@ -127,13 +127,26 @@ Before installing Python dependencies, ensure you have a compatible libffi versi
 conda install -n pokeagent libffi=3.3 -y
 ```
 
-### 5. Install Python Dependencies
+### 5. Install Tesseract OCR (Required for dialogue detection)
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install tesseract-ocr
+
+# macOS
+brew install tesseract
+
+# Conda (if preferred)
+conda install -c conda-forge tesseract
+```
+
+### 6. Install Python Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 6. Set up Game ROM
+### 7. Set up Game ROM
 
 **Important**: You must obtain a Pokémon Emerald ROM file legally (e.g., dump from your own cartridge).
 
@@ -144,7 +157,7 @@ pip install -r requirements.txt
        └── PokemonEmerald.gba  # Your ROM file here
    ```
 
-2. The ROM file can be named anything with a `.gba` extension, but make sure it's a valid Pokémon Emerald ROM by checking the hash with `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
+2. The ROM file can be named anything with a `.gba` extension, but make sure it's a valid Pokémon Emerald ROM by checking the SHA-1 hash with `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
 
 ## VLM Backend Setup
 
@@ -233,26 +246,69 @@ python agent.py --backend auto --model-name "Qwen/Qwen2-VL-2B-Instruct"  # → L
 
 ## Running the Agent
 
-### 1. Start the Emulator Server
+`agent.py` runs the emulator and agent in a single process, providing better integration and real-time control.
+
+### Quick Start
 
 ```bash
-python -m server.app
-```
+# Start with default settings (Gemini backend, agent mode)
+python agent.py
 
-The server will start on `http://localhost:8000`. Open this URL in your browser to view the game interface.
-
-### 2. Run the AI Agent
-
-Choose your VLM backend and run:
-
-```bash
 # OpenAI example
 python agent.py --backend openai --model-name "gpt-4o"
 
-# Local model example  
+# Local model example
 python agent.py --backend local --model-name "Qwen/Qwen2-VL-2B-Instruct"
+```
 
-# With additional options
+### Starting from Saved States
+
+```bash
+# Load from a saved state
+python agent.py --load-state server/start.state --backend gemini --model-name gemini-2.5-flash
+
+# Load from test states
+python agent.py --load-state tests/states/torchic.state --backend gemini --model-name gemini-2.5-flash
+```
+
+### Advanced Options
+
+```bash
+# Start in manual mode (keyboard control)
+python agent.py --manual-mode
+
+# Enable auto agent (agent acts continuously)
+python agent.py --agent-auto
+
+# Run without display window (headless)
+python agent.py --no-display --agent-auto
+
+# Custom port for web interface
+python agent.py --port 8080
+```
+
+### Debug Controls
+
+When running with display (default):
+- **M**: Display comprehensive state (exactly what the LLM sees)
+- **Shift+M**: Display map visualization
+- **S**: Save screenshot
+- **Tab**: Toggle agent/manual mode
+- **A**: Toggle auto agent mode
+- **1/2**: Save/Load state
+- **Space**: Trigger single agent step
+- **Arrow Keys/WASD**: Manual movement
+- **X/Z**: A/B buttons
+
+### Web Interface
+
+The agent automatically starts a web server at `http://localhost:8000` (or custom port).
+Open `server/stream.html` in your browser to view the game stream and agent status
+
+#### Other Options
+
+```bash
+# With additional debugging options
 python agent.py \
     --backend openai \
     --model-name "gpt-4o" \
@@ -265,20 +321,28 @@ python agent.py \
 - **Logs**: Monitor agent decisions in the terminal
 - **Debug**: Use `--debug-state` flag for detailed state information
 
+  --no-display            Run without PyGame display window
+  --agent-auto            Enable automatic agent actions on startup
+  --manual-mode           Start in manual mode instead of agent mode
+```
+
 ## Command Line Options
 
 ```bash
 python agent.py [OPTIONS]
 
 Options:
-  --model-name TEXT         VLM model name (default: "o4-mini")
-  --backend [auto|openai|openrouter|local|gemini|ollama]
-                           VLM backend type (default: "auto")
+  --rom PATH               Path to Pokemon Emerald ROM (default: Emerald-GBAdvance/rom.gba)
+  --load-state PATH        Load from a saved state file
+  --backend TEXT           VLM backend (openai/gemini/local/auto, default: gemini)
+  --model-name TEXT        Model name (default: gemini-2.5-flash)
+  --port INTEGER           Server port for web interface (default: 8000)
+  --no-display            Run without PyGame display window
+  --agent-auto            Enable automatic agent actions on startup
+  --manual-mode           Start in manual mode instead of agent mode
   --vlm-port INTEGER       Port for Ollama server (default: 11434)
   --device TEXT            Device for local models (auto/cpu/cuda, default: "auto")
   --load-in-4bit          Use 4-bit quantization for local models
-  --debug-state           Enable detailed state debugging
-  --action-delay FLOAT     Delay after actions in seconds (default: 0.3)
 ```
 
 ## Customizing Agent Behavior (Prompt Editing Guide)
@@ -483,9 +547,10 @@ python agent.py --backend local --model-name "your-model" --device cuda
    python agent.py --backend local --load-in-4bit --model-name "your-model"
    ```
 
-3. **Server connection failed**:
-   - Ensure `python -m server.app` is running
-   - Check that port 8000 is available
+3. **Web interface connection issues**:
+   - Ensure agent.py is running
+   - Check that the specified port (default 8000) is available
+   - Try accessing http://localhost:8000 directly
 
 4. **API rate limits**:
    - Use OpenRouter for better rate limits

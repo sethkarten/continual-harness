@@ -247,6 +247,15 @@ class EmeraldEmulator:
             # Initialize memory reader
             self.memory_reader = PokemonEmeraldReader(self.core)
             
+            # Set up callback for memory reader to invalidate emulator cache on area transitions
+            def invalidate_emulator_cache():
+                if hasattr(self, '_cached_state'):
+                    delattr(self, '_cached_state')
+                if hasattr(self, '_cached_state_time'):
+                    delattr(self, '_cached_state_time')
+                    
+            self.memory_reader._emulator_cache_invalidator = invalidate_emulator_cache
+            
             # Set up frame callback to invalidate memory cache
             self.core.add_frame_callback(self._invalidate_mem_cache)
             
@@ -365,6 +374,11 @@ class EmeraldEmulator:
         # Update dialog state cache for FPS adjustment
         self._update_dialog_state_cache()
         
+        # Clear dialogue cache if A button was pressed (dismisses dialogue)
+        if buttons and any(button.lower() == 'a' for button in buttons):
+            if self.memory_reader:
+                self.memory_reader.clear_dialogue_cache_on_button_press()
+        
         # Clear state cache after action to ensure fresh data
         if hasattr(self, '_cached_state'):
             delattr(self, '_cached_state')
@@ -440,10 +454,21 @@ class EmeraldEmulator:
                 self.core.load_raw_state(state_bytes)
                 logger.info("State loaded.")
                 
-                # Reset dialog tracking when loading new state
+                # Reset dialog tracking and invalidate map cache when loading new state
                 if self.memory_reader:
                     self.memory_reader.reset_dialog_tracking()
-                                    # Set the current state file for both emulator and memory reader
+                    self.memory_reader.invalidate_map_cache()
+                    
+                    # Run a frame to ensure memory is properly loaded
+                    self.core.run_frame()
+                    
+                    # Force finding map buffer addresses after state load
+                    if not self.memory_reader._find_map_buffer_addresses():
+                        logger.warning("Could not find map buffer addresses after state load")
+                    else:
+                        logger.info(f"Map buffer found at 0x{self.memory_reader._map_buffer_addr:08X}")
+                
+                # Set the current state file for both emulator and memory reader
                 self._current_state_file = path
                 if self.memory_reader:
                     self.memory_reader._current_state_file = path
@@ -518,8 +543,12 @@ class EmeraldEmulator:
             "sound": self.sound,
         }
 
-    def get_comprehensive_state(self) -> Dict[str, Any]:
-        """Get comprehensive game state including visual and memory data using enhanced memory reader"""
+    def get_comprehensive_state(self, screenshot=None) -> Dict[str, Any]:
+        """Get comprehensive game state including visual and memory data using enhanced memory reader
+        
+        Args:
+            screenshot: Optional PIL Image screenshot to use. If None, will call get_screenshot()
+        """
         # Simple caching to avoid redundant calls within a short time window
         import time
         current_time = time.time()
@@ -529,9 +558,13 @@ class EmeraldEmulator:
             if current_time - self._cached_state_time < 0.1:  # 100ms cache
                 return self._cached_state
         
+        # Use provided screenshot or get a new one
+        if screenshot is None:
+            screenshot = self.get_screenshot()
+        
         # Use the enhanced memory reader's comprehensive state method
         if self.memory_reader:
-            state = self.memory_reader.get_comprehensive_state()
+            state = self.memory_reader.get_comprehensive_state(screenshot)
         else:
             # Fallback to basic state
             state = {
@@ -565,8 +598,7 @@ class EmeraldEmulator:
                 }
             }
         
-        # Get visual observation
-        screenshot = self.get_screenshot()
+        # Use screenshot already captured
         if screenshot:
             state["visual"]["screenshot"] = screenshot
         

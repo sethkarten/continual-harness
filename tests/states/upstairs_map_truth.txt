@@ -1,0 +1,22 @@
+=== Upstairs State Map ===
+Format: (MetatileID, Behavior, X, Y)
+Map dimensions: 15x15
+
+--- TRAVERSABILITY MAP ---
+      0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 
+    ------------------------------
+ 0: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+ 1: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+ 2: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+ 3: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+ 4: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+ 5: # # # # # # # # # IM IM IM IM IM IM
+ 6: # # RE # TE # # D # IM IM IM IM IM IM
+ 7: . . . . . . . P . IM IM IM IM IM IM
+ 8: . . . . HO HO HO HO . IM IM IM IM IM IM
+ 9: . IM . . HO HO HO HO . IM IM IM IM IM IM
+10: . # . . HO HO HO HO . IM IM IM IM IM IM
+11: . . . . HO HO HO HO . IM IM IM IM IM IM
+12: . . . . . . . . . IM IM IM IM IM IM
+13: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
+14: IM IM IM IM IM IM IM IM IM IM IM IM IM IM IM
