@@ -5,10 +5,43 @@ import functools
 import struct
 from collections import namedtuple
 
-from pygba.utils import BaseCharmap
-
 from pokemon_env.enums import Move, PokemonType, StatusCondition
 from pokemon_env.types import PokemonData
+
+
+class BaseCharmap:
+    charmap: list[str]
+    terminator: int
+
+    def decode(self, chars: bytes) -> str:
+        string = ""
+        for i in range(len(chars)):
+            if chars[i] == self.terminator:
+                break
+            string += self.charmap[chars[i]]
+        return string
+
+class AsciiCharmap(BaseCharmap):
+    charmap = [
+        "", "", "", "", "", "", "", "", "\r", "\t", " ", " ", " ", "\n", "", "",
+        "", "", "", "", "", "", "", "", "", "", "SUB", "ESC", "", "", "", "",
+        " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "*", "+", ",", "-", ".", "/", "0", "1",
+        "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A",
+        "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
+        "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "\\", "]", "^", "_", "`", "a",
+        "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q",
+        "r", "s", "t", "u", "v", "w", "x", "y", "z", "{", "|", "}", "~", "DEL", "Ç", "ü",
+        "é", "â", "ä", "à", "å", "ç", "ê", "ë", "è", "ï", "î", "ì", "Ä", "Å", "É", "æ",
+        "Æ", "ô", "ö", "ò", "û", "ù", "ÿ", "Ö", "Ü", "ø", "£", "Ø", "×", "ƒ", "á", "í",
+        "ó", "ú", "ñ", "Ñ", "ª", "º", "¿", "®", "¬", "½", "¼", "¡", "«", "»", "░", "▒",
+        "▓", "│", "┤", "Á", "Â", "À", "©", "╣", "║", "╗", "╝", "¢", "¥", "┐", "└", "┴",
+        "┬", "├", "─", "┼", "ã", "Ã", "╚", "╔", "╩", "╦", "╠", "═", "╬", "¤", "ð", "Ð",
+        "Ê", "Ë", "È", "ı", "Í", "Î", "Ï", "┘", "┌", "█", "▄", "¦", "Ì", "▀", "Ó", "ß",
+        "Ô", "Ò", "õ", "Õ", "µ", "þ", "Þ", "Ú", "Û", "Ù", "ý", "Ý", "¯", "´", "¬", "±",
+        "‗", "¾", "¶", "§", "÷", "¸", "°", "¨", "•", "¹", "³", "²", "■", "\u00a0",
+    ]
+    terminator = 0x00
+
 
 
 # Pokemon Emerald Sym Addresses
