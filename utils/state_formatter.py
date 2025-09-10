@@ -380,19 +380,111 @@ def _format_state_detailed(state_data, include_debug_info=False, include_npcs=Tr
             battle = game_data['battle_info']
             context_parts.append("\n=== BATTLE STATUS ===")
             
-            if 'player_pokemon' in battle:
+            # Battle type and context
+            battle_type = battle.get('battle_type', 'unknown')
+            context_parts.append(f"Battle Type: {battle_type.title()}")
+            if battle.get('is_capturable'):
+                context_parts.append("🟢 Wild Pokémon - CAN BE CAPTURED")
+            if battle.get('can_escape'):
+                context_parts.append("🟡 Can escape from battle")
+            
+            # Player's active Pokémon
+            if 'player_pokemon' in battle and battle['player_pokemon']:
                 player_pkmn = battle['player_pokemon']
-                context_parts.append(f"Your Pokemon: {player_pkmn.get('species', 'Unknown')} (Lv.{player_pkmn.get('level', '?')})")
-                context_parts.append(f"  HP: {player_pkmn.get('current_hp', '?')}/{player_pkmn.get('max_hp', '?')}")
-                if player_pkmn.get('status') and player_pkmn['status'] != 'Normal':
-                    context_parts.append(f"  Status: {player_pkmn['status']}")
+                context_parts.append(f"\n--- YOUR POKÉMON ---")
+                context_parts.append(f"{player_pkmn.get('nickname', player_pkmn.get('species', 'Unknown'))} (Lv.{player_pkmn.get('level', '?')})")
                 
+                # Health display with percentage
+                current_hp = player_pkmn.get('current_hp', 0)
+                max_hp = player_pkmn.get('max_hp', 1)
+                hp_pct = player_pkmn.get('hp_percentage', 0)
+                health_bar = "🟢" if hp_pct > 50 else "🟡" if hp_pct > 25 else "🔴"
+                context_parts.append(f"  HP: {current_hp}/{max_hp} ({hp_pct}%) {health_bar}")
+                
+                # Status condition
+                status = player_pkmn.get('status', 'Normal')
+                if status != 'Normal':
+                    context_parts.append(f"  Status: {status}")
+                
+                # Types
+                types = player_pkmn.get('types', [])
+                if types:
+                    context_parts.append(f"  Type: {'/'.join(types)}")
+                
+                # Available moves with PP
+                moves = player_pkmn.get('moves', [])
+                move_pp = player_pkmn.get('move_pp', [])
+                if moves:
+                    context_parts.append(f"  Moves:")
+                    for i, move in enumerate(moves):
+                        if move and move.strip():
+                            pp = move_pp[i] if i < len(move_pp) else '?'
+                            context_parts.append(f"    {i+1}. {move} (PP: {pp})")
+                
+            # Opponent Pokémon
             if 'opponent_pokemon' in battle:
-                opp_pkmn = battle['opponent_pokemon']
-                context_parts.append(f"\nOpponent: {opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')})")
-                context_parts.append(f"  HP: {opp_pkmn.get('current_hp', '?')}/{opp_pkmn.get('max_hp', '?')}")
-                if opp_pkmn.get('status') and opp_pkmn['status'] != 'Normal':
-                    context_parts.append(f"  Status: {opp_pkmn['status']}")
+                if battle['opponent_pokemon']:
+                    opp_pkmn = battle['opponent_pokemon']
+                    context_parts.append(f"\n--- OPPONENT POKÉMON ---")
+                    context_parts.append(f"{opp_pkmn.get('species', 'Unknown')} (Lv.{opp_pkmn.get('level', '?')})")
+                    
+                    # Health display with percentage
+                    current_hp = opp_pkmn.get('current_hp', 0)
+                    max_hp = opp_pkmn.get('max_hp', 1)
+                    hp_pct = opp_pkmn.get('hp_percentage', 0)
+                    health_bar = "🟢" if hp_pct > 50 else "🟡" if hp_pct > 25 else "🔴"
+                    context_parts.append(f"  HP: {current_hp}/{max_hp} ({hp_pct}%) {health_bar}")
+                    
+                    # Status condition
+                    status = opp_pkmn.get('status', 'Normal')
+                    if status != 'Normal':
+                        context_parts.append(f"  Status: {status}")
+                    
+                    # Types
+                    types = opp_pkmn.get('types', [])
+                    if types:
+                        context_parts.append(f"  Type: {'/'.join(types)}")
+                    
+                    # Moves (for wild Pokémon, showing moves can help with strategy)
+                    moves = opp_pkmn.get('moves', [])
+                    if moves and any(move.strip() for move in moves):
+                        context_parts.append(f"  Known Moves:")
+                        for i, move in enumerate(moves):
+                            if move and move.strip():
+                                context_parts.append(f"    • {move}")
+                    
+                    # Stats (helpful for battle strategy)
+                    stats = opp_pkmn.get('stats', {})
+                    if stats:
+                        context_parts.append(f"  Battle Stats: ATK:{stats.get('attack', '?')} DEF:{stats.get('defense', '?')} SPD:{stats.get('speed', '?')}")
+                    
+                    # Special indicators
+                    if opp_pkmn.get('is_shiny'):
+                        context_parts.append(f"  ✨ SHINY POKÉMON!")
+                else:
+                    # Opponent data not ready
+                    context_parts.append(f"\n--- OPPONENT POKÉMON ---")
+                    opponent_status = battle.get('opponent_status', 'Opponent data not available')
+                    context_parts.append(f"⏳ {opponent_status}")
+                    context_parts.append("  (Battle may be in initialization phase)")
+                    
+            # Battle interface info
+            interface = battle.get('battle_interface', {})
+            available_actions = interface.get('available_actions', [])
+            if available_actions:
+                context_parts.append(f"\n--- AVAILABLE ACTIONS ---")
+                context_parts.append(f"Options: {', '.join(available_actions)}")
+                
+            # Trainer battle specific info
+            if battle.get('is_trainer_battle'):
+                remaining = battle.get('opponent_team_remaining', 1)
+                if remaining > 1:
+                    context_parts.append(f"\nTrainer has {remaining} Pokémon remaining")
+                    
+            # Battle phase info
+            battle_phase = battle.get('battle_phase_name')
+            if battle_phase:
+                context_parts.append(f"\nBattle Phase: {battle_phase}")
         
         # Party information (important for switching decisions)
         context_parts.append("\n=== PARTY STATUS ===")
