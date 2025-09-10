@@ -136,9 +136,11 @@ class AgentStateResponse(BaseModel):
 class AgentModules:
     """Container for agent modules using function-based approach"""
     def __init__(self, backend="openai", model_name="gpt-4o"):
-        self.vlm = VLM(backend=backend, model_name=model_name)
         self.backend = backend
         self.model_name = model_name
+        self.vlm = None  # Will be initialized lazily
+        self._vlm_initializing = False
+        self._vlm_init_error = None
         
         # Agent state
         self.memory_context = []
@@ -151,14 +153,51 @@ class AgentModules:
         self.thinking = False
         self.step_counter = 0  # Track frame IDs for observations
     
+    def _ensure_vlm_initialized(self):
+        """Initialize VLM if not already done (lazy initialization for heavy models)"""
+        if self.vlm is not None:
+            return True
+        
+        if self._vlm_init_error:
+            raise Exception(f"VLM initialization failed previously: {self._vlm_init_error}")
+        
+        if self._vlm_initializing:
+            # Wait for initialization to complete
+            import time
+            timeout = 60  # 60 seconds timeout
+            start = time.time()
+            while self._vlm_initializing and time.time() - start < timeout:
+                time.sleep(0.1)
+            
+            if self.vlm is None:
+                raise Exception("VLM initialization timed out")
+            return True
+        
+        # Initialize VLM
+        self._vlm_initializing = True
+        try:
+            print(f"Initializing {self.backend} VLM model {self.model_name}...")
+            self.vlm = VLM(backend=self.backend, model_name=self.model_name)
+            print(f"VLM initialized successfully")
+            return True
+        except Exception as e:
+            self._vlm_init_error = str(e)
+            raise
+        finally:
+            self._vlm_initializing = False
+    
     def process_game_state(self, game_state):
         """Process game state through agent modules"""
         try:
+            # Ensure VLM is initialized (will happen in background thread on first call)
+            self._ensure_vlm_initialized()
+            
             with agent_lock:
                 self.thinking = True
                 
                 # Get screenshot from game state
-                frame = game_state["visual"]["screenshot"] if game_state["visual"]["screenshot"] else None
+                screenshot_obj = game_state["visual"]["screenshot"]
+                frame = screenshot_obj if screenshot_obj is not None and hasattr(screenshot_obj, 'save') else None
                 
                 # Increment step counter
                 self.step_counter += 1
@@ -287,7 +326,7 @@ async def broadcast_state_update():
         party_data = []
         if "player" in last_game_state:
             player_data = last_game_state["player"]
-            if "party" in player_data and player_data["party"]:
+            if "party" in player_data and player_data["party"] is not None:
                 party = player_data["party"]
                 if isinstance(party, dict) and "pokemon" in party:
                     party_data = party["pokemon"]
@@ -379,7 +418,7 @@ def setup_emulator(rom_path="Emerald-GBAdvance/rom.gba", load_state=None):
             print(f"🗺️  Map: {state.get('player', {}).get('location', 'Unknown')}")
         
         screenshot = emulator.get_screenshot()
-        if screenshot:
+        if screenshot is not None and hasattr(screenshot, 'save'):
             with obs_lock:
                 current_obs = np.array(screenshot)
         else:
@@ -841,7 +880,7 @@ def background_emulator_loop():
         
         # Update screenshot (very lightweight - just get the PIL image)
         screenshot = emulator.get_screenshot()
-        if screenshot:
+        if screenshot is not None and hasattr(screenshot, 'save'):
             # Store PIL image directly, convert to numpy only when display needs it
             with obs_lock:
                 current_obs = screenshot  # Store PIL image directly
@@ -862,8 +901,26 @@ def background_emulator_loop():
                 # Only get comprehensive state when we actually need to broadcast (expensive)
                 if websocket_connections and len(websocket_connections) > 0:
                     # Use the current screenshot we already have to avoid redundant get_screenshot() calls
-                    game_state = emulator.get_comprehensive_state(screenshot)
-                    last_game_state = game_state
+                    try:
+                        game_state = emulator.get_comprehensive_state(screenshot)
+                        last_game_state = game_state
+                    except ValueError as e:
+                        if "ambiguous" in str(e):
+                            print(f"AMBIGUOUS ERROR: Screenshot type: {type(screenshot)}")
+                            if hasattr(screenshot, 'shape'):
+                                print(f"Screenshot has shape: {screenshot.shape}")
+                            if hasattr(screenshot, 'size'):
+                                print(f"Screenshot has size: {screenshot.size}")
+                            print(f"Screenshot value: {screenshot}")
+                            import traceback
+                            traceback.print_exc()
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error getting comprehensive state: {e}")
+                        import traceback
+                        import sys
+                        traceback.print_exc()
+                        sys.stderr.flush()
                 
                 # Only broadcast if we have WebSocket clients (skip expensive operations if not needed)
                 if websocket_connections and len(websocket_connections) > 0:
@@ -1184,7 +1241,8 @@ async def get_comprehensive_state():
         state["agent"] = agent_status
         
         # Convert screenshot to base64 if available
-        if "visual" in state and "screenshot" in state["visual"] and state["visual"]["screenshot"]:
+        screenshot_obj = state.get("visual", {}).get("screenshot")
+        if screenshot_obj is not None and hasattr(screenshot_obj, 'save'):
             try:
                 buffer = io.BytesIO()
                 state["visual"]["screenshot"].save(buffer, format='PNG')

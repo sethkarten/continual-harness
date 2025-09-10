@@ -599,7 +599,7 @@ class EmeraldEmulator:
             }
         
         # Use screenshot already captured
-        if screenshot:
+        if screenshot is not None and hasattr(screenshot, 'save'):
             state["visual"]["screenshot"] = screenshot
         
         # Cache the result

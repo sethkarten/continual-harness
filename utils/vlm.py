@@ -259,10 +259,10 @@ class OpenRouterBackend(VLMBackend):
 class LocalHuggingFaceBackend(VLMBackend):
     """Local HuggingFace transformers backend with bitsandbytes optimization"""
     
-    def __init__(self, model_name: str, device: str = "auto", load_in_4bit: bool = True, **kwargs):
+    def __init__(self, model_name: str, device: str = "auto", load_in_4bit: bool = False, **kwargs):
         try:
             import torch
-            from transformers import AutoProcessor, AutoModelForVision2Seq, BitsAndBytesConfig
+            from transformers import AutoProcessor, AutoModelForImageTextToText, BitsAndBytesConfig
             from PIL import Image
         except ImportError as e:
             raise ImportError(f"Required packages not found. Install with: pip install torch transformers bitsandbytes accelerate. Error: {e}")
@@ -286,7 +286,7 @@ class LocalHuggingFaceBackend(VLMBackend):
         # Load processor and model
         try:
             self.processor = AutoProcessor.from_pretrained(model_name)
-            self.model = AutoModelForVision2Seq.from_pretrained(
+            self.model = AutoModelForImageTextToText.from_pretrained(
                 model_name,
                 quantization_config=quantization_config,
                 device_map=device if device != "auto" else "auto",
@@ -314,8 +314,24 @@ class LocalHuggingFaceBackend(VLMBackend):
             logger.info(f"[{module_name}] PROMPT: {prompt_preview}")
             
             with torch.no_grad():
+                # Ensure all inputs are on the correct device
+                if hasattr(self.model, 'device'):
+                    device = self.model.device
+                elif hasattr(self.model, 'module') and hasattr(self.model.module, 'device'):
+                    device = self.model.module.device
+                else:
+                    device = next(self.model.parameters()).device
+                
+                # Move inputs to device if needed
+                inputs_on_device = {}
+                for k, v in inputs.items():
+                    if hasattr(v, 'to'):
+                        inputs_on_device[k] = v.to(device)
+                    else:
+                        inputs_on_device[k] = v
+                
                 generated_ids = self.model.generate(
-                    **inputs,
+                    **inputs_on_device,
                     max_new_tokens=1024,
                     do_sample=True,
                     temperature=0.7,
@@ -352,28 +368,29 @@ class LocalHuggingFaceBackend(VLMBackend):
         else:
             raise ValueError(f"Unsupported image type: {type(img)}")
         
-        # Prepare inputs
-        inputs = self.processor(text=text, images=image, return_tensors="pt")
-        
-        # Move inputs to the same device as model
-        if hasattr(self.model, 'device'):
-            device = self.model.device
-            inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        # Prepare messages with proper chat template format
+        messages = [
+            {"role": "user",
+             "content": [
+                 {"type": "image", "image": image},
+                 {"type": "text", "text": text}
+             ]}
+        ]
+        formatted_text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=formatted_text, images=image, return_tensors="pt")
         
         return self._generate_response(inputs, text, module_name)
     
     def get_text_query(self, text: str, module_name: str = "Unknown") -> str:
         """Process a text-only prompt using local HuggingFace model"""
-        # For text-only queries, we'll create a dummy white image
-        dummy_image = Image.new('RGB', (224, 224), color='white')
-        
-        # Prepare inputs
-        inputs = self.processor(text=text, images=dummy_image, return_tensors="pt")
-        
-        # Move inputs to the same device as model
-        if hasattr(self.model, 'device'):
-            device = self.model.device
-            inputs = {k: v.to(device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+        # For text-only queries, use simple text format without image
+        messages = [
+            {"role": "user", "content": text}
+        ]
+        formatted_text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=formatted_text, return_tensors="pt")
         
         return self._generate_response(inputs, text, module_name)
 

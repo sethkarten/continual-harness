@@ -2792,7 +2792,7 @@ class PokemonEmeraldReader:
                 memory_text = raw_memory_text
         
         # If we have OCR available and a screenshot, use smart validation
-        if self._ocr_enabled and screenshot is not None:
+        if self._ocr_enabled and screenshot is not None and hasattr(screenshot, 'size'):
             try:
                 ocr_text = self._ocr_detector.detect_dialogue_from_screenshot(screenshot)
                 
