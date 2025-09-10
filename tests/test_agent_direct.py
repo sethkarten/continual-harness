@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Pytest for agent_direct functionality
+Pytest for agent functionality (legacy test file)
 """
 
 import pytest
@@ -9,30 +9,30 @@ import json
 import time
 
 class TestAgentDirectAPI:
-    """Test class for agent_direct API endpoints"""
+    """Test class for agent API endpoints"""
     
     base_url = "http://localhost:8080"
     
     def test_imports_work(self):
         """Test that our imports are working"""
-        import agent_direct
-        assert hasattr(agent_direct, 'app')
-        assert hasattr(agent_direct, 'agent_mode')
-        assert hasattr(agent_direct, 'websocket_connections')
+        import agent
+        assert hasattr(agent, 'app')
+        assert hasattr(agent, 'agent_mode')
+        assert hasattr(agent, 'websocket_connections')
         
     def test_global_state_initialized(self):
         """Test that global state variables are properly initialized"""
-        import agent_direct
-        assert agent_direct.agent_mode == True   # Should start in agent mode by default
-        assert agent_direct.agent_auto_enabled == False  # Should start with auto disabled
-        assert isinstance(agent_direct.websocket_connections, set)
-        assert len(agent_direct.websocket_connections) == 0  # Should start empty
+        import agent
+        assert agent.agent_mode == True   # Should start in agent mode by default
+        assert agent.agent_auto_enabled == False  # Should start with auto disabled
+        assert isinstance(agent.websocket_connections, set)
+        assert len(agent.websocket_connections) == 0  # Should start empty
         
     def test_broadcast_function_exists(self):
         """Test that broadcast function exists and is callable"""
-        import agent_direct
-        assert hasattr(agent_direct, 'broadcast_state_update')
-        assert callable(agent_direct.broadcast_state_update)
+        import agent
+        assert hasattr(agent, 'broadcast_state_update')
+        assert callable(agent.broadcast_state_update)
     
     @pytest.mark.skip(reason="Requires running server")
     def test_status_endpoint(self):
@@ -44,7 +44,7 @@ class TestAgentDirectAPI:
             assert "step" in data
             assert "agent_initialized" in data
         except requests.exceptions.ConnectionError:
-            pytest.skip("agent_direct server not running")
+            pytest.skip("agent server not running")
     
     @pytest.mark.skip(reason="Requires running server") 
     def test_toggle_mode_endpoint(self):
@@ -57,7 +57,7 @@ class TestAgentDirectAPI:
             assert "agent_mode" in data
             assert data["mode"] in ["MANUAL", "AGENT"]
         except requests.exceptions.ConnectionError:
-            pytest.skip("agent_direct server not running")
+            pytest.skip("agent server not running")
     
     @pytest.mark.skip(reason="Requires running server")
     def test_toggle_auto_endpoint(self):
@@ -70,7 +70,7 @@ class TestAgentDirectAPI:
             assert "status" in data
             assert data["status"] in ["ENABLED", "DISABLED"]
         except requests.exceptions.ConnectionError:
-            pytest.skip("agent_direct server not running")
+            pytest.skip("agent server not running")
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
