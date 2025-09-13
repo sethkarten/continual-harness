@@ -16,6 +16,10 @@ import threading
 from PIL import Image
 import argparse
 import logging
+import cv2
+import subprocess
+import multiprocessing
+import requests
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,6 +61,18 @@ agent_mode = True   # True = agent (default), False = manual
 agent_auto_enabled = False  # Auto agent actions
 last_game_state = None  # Cache for web interface
 recent_manual_actions = []  # Track recent manual button presses with timestamps
+
+# Video recording state
+video_writer = None
+video_recording = False
+video_filename = None
+video_frame_skip = 4  # Record every 4th frame (120/4 = 30 FPS)
+video_frame_counter = 0  # Counter for frame skipping
+
+# Simple mode settings
+simple_mode = False
+no_ocr_mode = False
+multiprocess_mode = False
 
 # Agent processing queues for async processing
 agent_processing_queue = []
@@ -202,6 +218,11 @@ class AgentModules:
                 # Increment step counter
                 self.step_counter += 1
                 
+                # Simple mode: skip all modules except action selection
+                if simple_mode:
+                    return self._simple_mode_processing(frame, game_state)
+                
+                # Full mode: use all four agent modules
                 # 1. Perception - analyze current game state
                 observation, slow_thinking_needed = perception_step(frame, game_state, self.vlm)
                 self.last_observation = observation
@@ -289,6 +310,65 @@ class AgentModules:
             logger.error(f"Error in agent processing: {e}")
             self.thinking = False
             return {"action": "A", "reasoning": f"Error: {e}"}  # Default safe action
+    
+    def _simple_mode_processing(self, frame, game_state):
+        """Simple mode: direct frame + formatted state -> action"""
+        try:
+            from utils.state_formatter import format_state_for_llm
+            
+            # Format the current state for LLM
+            formatted_state = format_state_for_llm(game_state)
+            
+            # Create simple prompt with just frame and comprehensive state
+            prompt = f"""You are playing Pokemon Emerald. Based on the current game frame and state information, choose the best button action.
+
+CURRENT GAME STATE:
+{formatted_state}
+
+ACTION HISTORY (last 20 actions):
+{', '.join(self.recent_actions[-20:]) if self.recent_actions else 'None'}
+
+Available actions: A, B, START, SELECT, UP, DOWN, LEFT, RIGHT
+
+Respond with just the button name (e.g., 'A' or 'RIGHT'). Be decisive and avoid getting stuck."""
+            
+            # Make VLM call directly
+            if frame:
+                response = self.vlm.get_query(frame, prompt, "simple_mode")
+            else:
+                response = self.vlm.get_text_query(prompt, "simple_mode")
+            
+            # Extract action from response
+            response_upper = response.upper().strip()
+            valid_actions = ['A', 'B', 'START', 'SELECT', 'UP', 'DOWN', 'LEFT', 'RIGHT']
+            
+            # Find the action in the response
+            action = 'A'  # Default
+            for valid_action in valid_actions:
+                if valid_action in response_upper:
+                    action = valid_action
+                    break
+            
+            action_result = {
+                "action": action,
+                "reasoning": f"Simple mode: {response[:100]}..."
+            }
+            
+            # Store action result
+            self.last_action = action_result
+            self.recent_actions.append(action_result["action"])
+            
+            # Keep recent actions reasonable size
+            if len(self.recent_actions) > 20:
+                self.recent_actions = self.recent_actions[-20:]
+            
+            self.thinking = False
+            return action_result
+            
+        except Exception as e:
+            logger.error(f"Error in simple mode processing: {e}")
+            self.thinking = False
+            return {"action": "A", "reasoning": f"Simple mode error: {e}"}
     
     def get_agent_status(self):
         """Get current agent status for API"""
@@ -385,9 +465,12 @@ async def broadcast_state_update():
 
 def signal_handler(signum, _frame):
     """Handle shutdown signals gracefully"""
-    global running
+    global running, video_writer
     print(f"\nReceived signal {signum}, shutting down gracefully...")
     running = False
+    if video_writer is not None:
+        video_writer.release()
+        print(f"Video saved to: {video_filename}")
     if emulator:
         emulator.stop()
     pygame.quit()
@@ -395,7 +478,7 @@ def signal_handler(signum, _frame):
 
 def setup_emulator(rom_path="Emerald-GBAdvance/rom.gba", load_state=None):
     """Initialize the emulator"""
-    global emulator, current_obs
+    global emulator, current_obs, no_ocr_mode
     
     try:
         if not os.path.exists(rom_path):
@@ -406,6 +489,13 @@ def setup_emulator(rom_path="Emerald-GBAdvance/rom.gba", load_state=None):
         
         emulator = EmeraldEmulator(rom_path=rom_path, headless=False, sound=False)
         emulator.initialize()
+        
+        # Disable OCR and all dialog detection if no_ocr_mode is enabled
+        if no_ocr_mode and emulator.memory_reader:
+            emulator.memory_reader._ocr_enabled = False
+            emulator.memory_reader._ocr_detector = None
+            emulator.memory_reader._dialog_detection_enabled = False
+            print("🚫 All dialogue detection disabled (--no-ocr flag)")
         
         if load_state and os.path.exists(load_state):
             emulator.load_state(load_state)
@@ -728,6 +818,69 @@ def queue_agent_step():
     else:
         print("❌ Cannot queue agent step - emulator or agent not ready")
 
+def init_video_recording(record_enabled=False):
+    """Initialize video recording if enabled"""
+    global video_writer, video_recording, video_filename, fps, video_frame_skip
+    
+    if not record_enabled:
+        return
+    
+    try:
+        # Create video filename with timestamp
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_filename = f"pokegent_recording_{timestamp}.mp4"
+        
+        # Video settings (GBA resolution is 240x160)
+        # Record at 30 FPS (skip every 4th frame from 120 FPS emulator)
+        recording_fps = fps / video_frame_skip  # 120 / 4 = 30 FPS
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(video_filename, fourcc, float(recording_fps), (240, 160))
+        
+        if video_writer.isOpened():
+            video_recording = True
+            print(f"📹 Video recording started: {video_filename} at {recording_fps:.0f} FPS (recording every {video_frame_skip} frames)")
+        else:
+            print("❌ Failed to initialize video recording")
+            video_writer = None
+            
+    except Exception as e:
+        print(f"❌ Video recording initialization error: {e}")
+        video_writer = None
+
+def record_frame(screenshot):
+    """Record frame to video if recording is enabled with frame skipping"""
+    global video_writer, video_recording, video_frame_counter, video_frame_skip
+    
+    if not video_recording or video_writer is None or screenshot is None:
+        return
+    
+    # Increment frame counter
+    video_frame_counter += 1
+    
+    # Only record every Nth frame based on frame skip
+    if video_frame_counter % video_frame_skip != 0:
+        return
+        
+    try:
+        # Convert PIL image to OpenCV format
+        if hasattr(screenshot, 'save'):  # PIL image
+            # Convert PIL to numpy array
+            frame_array = np.array(screenshot)
+            # Convert RGB to BGR for OpenCV
+            frame_bgr = cv2.cvtColor(frame_array, cv2.COLOR_RGB2BGR)
+            video_writer.write(frame_bgr)
+        elif isinstance(screenshot, np.ndarray):  # Already numpy array
+            # Convert RGB to BGR for OpenCV if needed
+            if screenshot.shape[2] == 3:  # RGB
+                frame_bgr = cv2.cvtColor(screenshot, cv2.COLOR_RGB2BGR)
+            else:
+                frame_bgr = screenshot
+            video_writer.write(frame_bgr)
+            
+    except Exception as e:
+        logger.debug(f"Video recording frame error: {e}")
+
 def background_emulator_loop():
     """Background 120 FPS emulator loop"""
     global current_obs, last_agent_action, pending_agent_action, running, current_actions, last_game_state, fps
@@ -884,6 +1037,9 @@ def background_emulator_loop():
             # Store PIL image directly, convert to numpy only when display needs it
             with obs_lock:
                 current_obs = screenshot  # Store PIL image directly
+            
+            # Record frame for video if enabled
+            record_frame(screenshot)
         else:
             # Debug: Log when screenshot is None
             if hasattr(emulator, '_screenshot_fail_count'):
@@ -941,8 +1097,8 @@ def background_emulator_loop():
             except Exception as e:
                 logger.debug(f"State update error: {e}")
         
-        # Run at 120 FPS for maximum performance
-        time.sleep(1.0 / 120)
+        # Run at configured FPS
+        time.sleep(1.0 / fps)
 
 def step_emulator(actions_pressed):
     """Queue actions for the background emulator loop"""
@@ -1718,6 +1874,150 @@ async def get_web_interface_server_path():
     """Serve the web interface at /server/stream.html path for compatibility"""
     return await serve_stream_html()
 
+def run_multiprocess_server(args):
+    """Run the server component in multiprocess mode"""
+    try:
+        # Import server dependencies
+        from server.app import app
+        import uvicorn
+        
+        # Configure the server app with the provided arguments
+        os.environ["ROM_PATH"] = args.rom
+        if args.load_state:
+            os.environ["LOAD_STATE"] = args.load_state
+        os.environ["VLM_BACKEND"] = args.backend
+        os.environ["VLM_MODEL"] = args.model_name
+        if args.no_ocr:
+            os.environ["NO_OCR"] = "1"
+        if args.record:
+            os.environ["RECORD_VIDEO"] = "1"
+        if args.simple:
+            os.environ["SIMPLE_MODE"] = "1"
+        
+        print(f"🌐 Starting server process on port {args.port}")
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+        
+    except ImportError:
+        print("❌ Server components not available for multiprocess mode")
+        print("Please ensure server/app.py exists and dependencies are installed")
+        return False
+    except Exception as e:
+        print(f"❌ Server process error: {e}")
+        return False
+
+def run_multiprocess_client(server_port=8000):
+    """Run the client component that talks to server in multiprocess mode"""
+    try:
+        import pygame
+        
+        # Initialize pygame for display
+        pygame.init()
+        screen_width, screen_height = 480, 320
+        screen = pygame.display.set_mode((screen_width, screen_height))
+        pygame.display.set_caption("Pokemon Agent - Multiprocess Client")
+        font = pygame.font.Font(None, 24)
+        clock = pygame.time.Clock()
+        
+        server_url = f"http://127.0.0.1:{server_port}"
+        running = True
+        
+        print(f"🎮 Starting client process, connecting to server at {server_url}")
+        
+        # Wait for server to be ready
+        max_retries = 30
+        for i in range(max_retries):
+            try:
+                response = requests.get(f"{server_url}/status", timeout=2)
+                if response.status_code == 200:
+                    print("✅ Connected to server")
+                    break
+            except:
+                print(f"⏳ Waiting for server... ({i+1}/{max_retries})")
+                time.sleep(1)
+        else:
+            print("❌ Could not connect to server")
+            return False
+        
+        # Main client loop
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_SPACE:
+                        # Send agent action request
+                        try:
+                            requests.post(f"{server_url}/action", 
+                                        json={"buttons": [], "manual": False}, 
+                                        timeout=30)
+                        except Exception as e:
+                            print(f"Agent action error: {e}")
+                    else:
+                        # Handle button presses
+                        button_map = {
+                            pygame.K_z: 'A', pygame.K_x: 'B', 
+                            pygame.K_RETURN: 'START', pygame.K_RSHIFT: 'SELECT',
+                            pygame.K_UP: 'UP', pygame.K_DOWN: 'DOWN',
+                            pygame.K_LEFT: 'LEFT', pygame.K_RIGHT: 'RIGHT'
+                        }
+                        if event.key in button_map:
+                            button = button_map[event.key]
+                            try:
+                                requests.post(f"{server_url}/action", 
+                                            json={"buttons": [button], "manual": True}, 
+                                            timeout=5)
+                            except Exception as e:
+                                print(f"Manual action error: {e}")
+            
+            # Get current frame from server
+            try:
+                response = requests.get(f"{server_url}/api/frame", timeout=2)
+                if response.status_code == 200:
+                    frame_data = response.json().get("frame", "")
+                    if frame_data:
+                        # Decode and display frame
+                        import base64
+                        import io
+                        img_data = base64.b64decode(frame_data)
+                        img = Image.open(io.BytesIO(img_data))
+                        frame_array = np.array(img)
+                        frame_surface = pygame.surfarray.make_surface(frame_array.swapaxes(0, 1))
+                        scaled_surface = pygame.transform.scale(frame_surface, (screen_width, screen_height))
+                        screen.blit(scaled_surface, (0, 0))
+            except Exception as e:
+                # Fill with black on error
+                screen.fill((0, 0, 0))
+                if font:
+                    error_text = font.render(f"Connection error: {str(e)[:50]}", True, (255, 255, 255))
+                    screen.blit(error_text, (10, 10))
+            
+            # Add status overlay
+            if font:
+                status_lines = [
+                    "Multiprocess Mode - Client",
+                    f"Server: {server_url}",
+                    "Controls: WASD=Move, Z=A, X=B, Space=Agent, Esc=Quit"
+                ]
+                y_offset = screen_height - 80
+                for line in status_lines:
+                    text_surface = font.render(line, True, (255, 255, 255))
+                    bg_rect = pygame.Rect(5, y_offset-2, text_surface.get_width()+4, text_surface.get_height()+4)
+                    pygame.draw.rect(screen, (0, 0, 0, 180), bg_rect)
+                    screen.blit(text_surface, (5, y_offset))
+                    y_offset += 25
+            
+            pygame.display.flip()
+            clock.tick(30)  # 30 FPS for client
+        
+        pygame.quit()
+        return True
+        
+    except Exception as e:
+        print(f"❌ Client process error: {e}")
+        return False
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(description="Direct Agent Pokemon Emerald")
@@ -1729,11 +2029,48 @@ def main():
     parser.add_argument("--no-display", action="store_true", help="Run without pygame display")
     parser.add_argument("--agent-auto", action="store_true", help="Agent acts automatically")
     parser.add_argument("--manual-mode", action="store_true", help="Start in manual mode instead of agent mode")
+    parser.add_argument("--record", action="store_true", help="Record video of the gameplay")
+    parser.add_argument("--simple", action="store_true", help="Simple mode: frame + LLM state input only")
+    parser.add_argument("--no-ocr", action="store_true", help="Disable OCR dialogue detection")
+    parser.add_argument("--multiprocess", action="store_true", help="Run mGBA/pygame in separate process from agent")
     
     args = parser.parse_args()
     
-    # Apply command line flags to global state
-    global agent_mode, agent_auto_enabled
+    # Handle multiprocess mode first 
+    if args.multiprocess:
+        print("🔀 Multiprocess mode ENABLED: Running mGBA/pygame in separate process")
+        
+        # Start server process
+        server_process = multiprocessing.Process(target=run_multiprocess_server, args=(args,))
+        server_process.start()
+        
+        # Small delay to let server start
+        time.sleep(2)
+        
+        try:
+            # Run client process in main thread
+            if not args.no_display:
+                success = run_multiprocess_client(args.port)
+            else:
+                print("🌐 Server running in background (--no-display)")
+                server_process.join()  # Wait for server to finish
+                success = True
+        except KeyboardInterrupt:
+            print("Interrupted by user")
+            success = True
+        finally:
+            # Clean up server process
+            if server_process.is_alive():
+                server_process.terminate()
+                server_process.join(timeout=5)
+                if server_process.is_alive():
+                    server_process.kill()
+        
+        return 0 if success else 1
+    
+    # Apply command line flags to global state (single process mode)
+    global agent_mode, agent_auto_enabled, simple_mode, no_ocr_mode, multiprocess_mode
+    
     if args.manual_mode:
         agent_mode = False
         print("🎮 Starting in MANUAL mode (--manual-mode flag)")
@@ -1743,6 +2080,14 @@ def main():
     if args.agent_auto:
         agent_auto_enabled = True
         print("⚡ Auto agent ENABLED (--agent-auto flag)")
+    
+    if args.simple:
+        simple_mode = True
+        print("🚀 Simple mode ENABLED: Frame + LLM state -> Action (skipping perception/planning/memory modules)")
+    
+    if args.no_ocr:
+        no_ocr_mode = True
+        print("🚫 No-OCR mode ENABLED: Dialogue detection will use memory-only approach")
     
     # Set up signal handlers
     signal.signal(signal.SIGINT, signal_handler)
@@ -1761,6 +2106,9 @@ def main():
     if not setup_emulator(args.rom, args.load_state):
         print("Failed to initialize emulator")
         return 1
+    
+    # Initialize video recording if requested
+    init_video_recording(args.record)
     
     # Initialize agent
     if not setup_agent(args.backend, args.model_name):
@@ -1795,8 +2143,11 @@ def main():
         print(f"Error: {e}")
     finally:
         # Cleanup
-        global running
+        global running, video_writer
         running = False
+        if video_writer is not None:
+            video_writer.release()
+            print(f"Video saved to: {video_filename}")
         if emulator:
             emulator.stop()
         if not args.no_display:

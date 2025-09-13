@@ -245,6 +245,9 @@ class PokemonEmeraldReader:
         self._ocr_detector = create_ocr_detector()
         self._ocr_enabled = self._ocr_detector is not None
         
+        # Dialog detection control (can be disabled for no-ocr mode)
+        self._dialog_detection_enabled = True
+        
         # Track A button presses to prevent dialogue cache repopulation
         self._a_button_pressed_time = 0.0
         
@@ -2428,22 +2431,30 @@ class PokemonEmeraldReader:
                 if battle_details:
                     state["game"]["battle_info"] = battle_details
             
-            # Dialog text - use OCR fallback if screenshot available
-            dialog_text = self.read_dialog_with_ocr_fallback(screenshot)
-            if dialog_text:
-                state["game"]["dialog_text"] = dialog_text
-                logger.info(f"Found dialog text: {dialog_text[:100]}...")
+            # Dialog text - only read if dialog detection is enabled
+            if self._dialog_detection_enabled:
+                dialog_text = self.read_dialog_with_ocr_fallback(screenshot)
+                if dialog_text:
+                    state["game"]["dialog_text"] = dialog_text
+                    logger.info(f"Found dialog text: {dialog_text[:100]}...")
+                else:
+                    logger.debug("No dialog text found in memory buffers or OCR")
             else:
-                logger.debug("No dialog text found in memory buffers or OCR")
+                logger.debug("Dialog detection disabled (no-ocr mode)")
             
-            # Dialogue detection result - determines if dialogue should be shown to LLM
-            dialogue_active = self.is_in_dialog()
-            
-            # Update dialogue cache with current state
-            self._update_dialogue_cache(dialog_text, dialogue_active)
-            
-            # Use cached dialogue state for additional validation
-            cached_active, cached_text = self.get_cached_dialogue_state()
+            # Dialogue detection result - only if dialog detection is enabled
+            if self._dialog_detection_enabled:
+                dialogue_active = self.is_in_dialog()
+                
+                # Update dialogue cache with current state
+                self._update_dialogue_cache(dialog_text if 'dialog_text' in locals() else None, dialogue_active)
+                
+                # Use cached dialogue state for additional validation
+                cached_active, cached_text = self.get_cached_dialogue_state()
+            else:
+                dialogue_active = False
+                cached_active = False
+                cached_text = ""
             
             # Final dialogue state combines detection and cache validation
             final_dialogue_active = dialogue_active and cached_active
