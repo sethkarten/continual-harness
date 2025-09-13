@@ -3,7 +3,7 @@
 *.pyc
 *.cpython
 *.pem
-*.gba
+# *.gba
 llm_log_*
 CLAUDE.md
 
