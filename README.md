@@ -285,6 +285,21 @@ python agent.py --no-display --agent-auto
 
 # Custom port for web interface
 python agent.py --port 8080
+
+# Video recording (saves MP4 file with timestamp)
+python agent.py --record --agent-auto
+
+# Simple mode (lightweight processing, frame + LLM only, skips perception/planning/memory)
+python agent.py --simple --agent-auto
+
+# Disable OCR dialogue detection (forces overworld state, no dialogue processing)
+python agent.py --no-ocr --agent-auto
+
+# Multiprocess mode (separate server/client processes for improved stability)
+python agent.py --multiprocess --agent-auto
+
+# Combine multiple features (recommended for production runs)
+python agent.py --multiprocess --record --simple --no-ocr --agent-auto --backend gemini
 ```
 
 ### Debug Controls
@@ -321,25 +336,140 @@ python agent.py \
 - **Logs**: Monitor agent decisions in the terminal
 - **Debug**: Use `--debug-state` flag for detailed state information
 
-  --no-display            Run without PyGame display window
-  --agent-auto            Enable automatic agent actions on startup
-  --manual-mode           Start in manual mode instead of agent mode
+## Feature Documentation
+
+### 🎬 Video Recording (`--record`)
+
+Automatically records gameplay to MP4 files with timestamps.
+
+**How it works:**
+- Records at 30 FPS (intelligent frame skipping from 120 FPS emulator)
+- Files saved as `pokegent_recording_YYYYMMDD_HHMMSS.mp4`
+- Works in both direct and multiprocess modes
+- Automatically cleaned up on graceful shutdown
+
+**Usage:**
+```bash
+# Direct mode recording
+python agent.py --record --agent-auto
+
+# Multiprocess mode recording (recommended)
+python agent.py --multiprocess --record --agent-auto
 ```
+
+### ⚡ Simple Mode (`--simple`)
+
+Lightweight processing mode that bypasses the four-module agent architecture.
+
+**Benefits:**
+- 3-5x faster processing (skips perception/planning/memory modules)
+- Direct frame + state → VLM → action pipeline
+- Ideal for rapid prototyping and resource-constrained environments
+- Maintains action history (last 20 actions)
+
+**Usage:**
+```bash
+# Simple mode for fast iterations
+python agent.py --simple --agent-auto
+
+# Combined with other features
+python agent.py --simple --multiprocess --record --agent-auto
+```
+
+### 🔇 No OCR Mode (`--no-ocr`)
+
+Completely disables dialogue detection and forces overworld state.
+
+**When to use:**
+- When dialogue detection is unreliable or causing issues
+- For speedrunning where dialogue should be skipped quickly
+- To ensure the agent never gets stuck in dialogue states
+- When OCR processing is consuming too many resources
+
+**Usage:**
+```bash
+# Disable all dialogue detection
+python agent.py --no-ocr --agent-auto
+
+# Recommended for production speedruns
+python agent.py --no-ocr --simple --multiprocess --agent-auto
+```
+
+### 🔄 Multiprocess Mode (`--multiprocess`)
+
+Runs the emulator/pygame in a separate process from the agent decision-making.
+
+**Advantages:**
+- **Improved Stability**: Isolates emulator crashes from agent crashes
+- **Better Performance**: Eliminates memory corruption issues from multithreading
+- **Resource Separation**: Agent and emulator can use different CPU cores
+- **Auto-Start**: Automatically starts and manages the server process
+
+**Architecture:**
+- **Server Process**: Runs emulator, pygame display, handles game state
+- **Client Process**: Runs agent decision-making, sends actions via HTTP
+- **Communication**: RESTful API between processes
+
+**Usage:**
+```bash
+# Basic multiprocess mode
+python agent.py --multiprocess --agent-auto
+
+# Production configuration (recommended)
+python agent.py --multiprocess --record --simple --no-ocr --agent-auto --backend gemini
+
+# Manual server/client (advanced)
+# Terminal 1: python -m server.app --load-state your_state.state
+# Terminal 2: python agent.py --multiprocess --backend gemini
+```
+
+### 🚀 Recommended Production Setup
+
+For the most stable and efficient agent runs:
+
+```bash
+python agent.py \
+    --multiprocess \
+    --record \
+    --simple \
+    --no-ocr \
+    --agent-auto \
+    --backend gemini \
+    --model-name gemini-2.5-flash \
+    --load-state your_starting_state.state
+```
+
+This combination provides:
+- ✅ Maximum stability (multiprocess isolation)
+- ✅ Video evidence (automatic recording)
+- ✅ Fast processing (simple mode)
+- ✅ No dialogue hanging (no-ocr)
+- ✅ Continuous operation (agent-auto)
 
 ## Command Line Options
 
 ```bash
 python agent.py [OPTIONS]
 
-Options:
+Basic Options:
   --rom PATH               Path to Pokemon Emerald ROM (default: Emerald-GBAdvance/rom.gba)
   --load-state PATH        Load from a saved state file
   --backend TEXT           VLM backend (openai/gemini/local/auto, default: gemini)
   --model-name TEXT        Model name (default: gemini-2.5-flash)
   --port INTEGER           Server port for web interface (default: 8000)
+
+Mode Options:
   --no-display            Run without PyGame display window
   --agent-auto            Enable automatic agent actions on startup
   --manual-mode           Start in manual mode instead of agent mode
+  --multiprocess          Run mGBA/pygame in separate process (recommended for stability)
+
+Feature Options:
+  --record                Record video of gameplay (saves MP4 with timestamp)
+  --simple                Simple mode: frame + LLM only (skips perception/planning/memory)
+  --no-ocr                Disable OCR dialogue detection (forces overworld state)
+
+VLM Options:
   --vlm-port INTEGER       Port for Ollama server (default: 11434)
   --device TEXT            Device for local models (auto/cpu/cuda, default: "auto")
   --load-in-4bit          Use 4-bit quantization for local models

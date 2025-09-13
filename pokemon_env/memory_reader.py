@@ -528,6 +528,10 @@ class PokemonEmeraldReader:
 
     def is_in_dialog(self) -> bool:
         """Check if currently in dialog state using enhanced pokeemerald-based detection"""
+        # Respect the dialog detection enabled flag
+        if not getattr(self, '_dialog_detection_enabled', True):
+            return False
+            
         try:
             current_time = time.time()
             
@@ -744,12 +748,17 @@ class PokemonEmeraldReader:
             'detection_result': False
         }
 
-    def invalidate_map_cache(self):
+    def invalidate_map_cache(self, clear_buffer_address=True):
         """Invalidate map-related caches when transitioning between areas"""
-        logger.info("Invalidating map cache due to area transition")
-        self._map_buffer_addr = None
-        self._map_width = None
-        self._map_height = None
+        logger.debug("Invalidating map cache due to area transition")
+        
+        # Only clear buffer address if explicitly requested (area transitions)
+        # For state loads, we want to keep the cached buffer address to avoid expensive scans
+        if clear_buffer_address:
+            self._map_buffer_addr = None
+            self._map_width = None
+            self._map_height = None
+        
         # CRITICAL: Clear behavior cache to force reload with new tileset
         self._cached_behaviors = None
         self._cached_behaviors_map_key = None

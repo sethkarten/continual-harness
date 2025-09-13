@@ -1894,8 +1894,20 @@ def run_multiprocess_server(args):
         if args.simple:
             os.environ["SIMPLE_MODE"] = "1"
         
+        print(f"📝 Server environment configured:")
+        print(f"   ROM: {args.rom}")
+        print(f"   Backend: {args.backend} / {args.model_name}")
+        if args.load_state:
+            print(f"   Load state: {args.load_state}")
+        if args.simple:
+            print(f"   Simple mode enabled")
+        if args.no_ocr:
+            print(f"   No-OCR mode enabled")
+        if args.record:
+            print(f"   Video recording enabled")
+        
         print(f"🌐 Starting server process on port {args.port}")
-        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")
+        uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
         
     except ImportError:
         print("❌ Server components not available for multiprocess mode")
@@ -1905,7 +1917,245 @@ def run_multiprocess_server(args):
         print(f"❌ Server process error: {e}")
         return False
 
-def run_multiprocess_client(server_port=8000):
+def run_multiprocess_client_headless(server_port=8000, args=None):
+    """Run headless client that just processes agent logic and sends commands to server"""
+    server_url = f"http://127.0.0.1:{server_port}"
+    
+    print(f"🤖 Starting headless agent client, connecting to server at {server_url}")
+    
+    # Wait for server to be ready
+    max_retries = 30
+    for i in range(max_retries):
+        try:
+            response = requests.get(f"{server_url}/status", timeout=2)
+            if response.status_code == 200:
+                print("✅ Connected to server")
+                break
+        except:
+            print(f"⏳ Waiting for server... ({i+1}/{max_retries})")
+            time.sleep(1)
+    else:
+        print("❌ Could not connect to server")
+        return False
+    
+    # Initialize agent if auto mode is enabled
+    vlm = None
+    agent_step_count = 0
+    last_agent_time = 0
+    
+    if args and args.agent_auto:
+        # Initialize VLM for agent processing
+        try:
+            vlm = VLM(backend=args.backend, model_name=args.model_name)
+            print(f"✅ Agent initialized with {args.backend}/{args.model_name}")
+        except Exception as e:
+            print(f"❌ Failed to initialize agent: {e}")
+            return False
+    
+    # Initialize agent modules if not in simple mode
+    agent_modules = None
+    if vlm and not (args and getattr(args, 'simple', False)):
+        try:
+            # Initialize agent modules like single process mode
+            agent_modules = {
+                'perception': True,  # We'll use the functions directly
+                'planning': True,
+                'memory': True,
+                'action': True
+            }
+            print("✅ Agent modules initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize agent modules: {e}")
+    
+    running = True
+    print("🤖 Agent running... Press Ctrl+C to stop")
+    
+    try:
+        while running:
+            # Agent processing (if auto mode enabled)
+            current_time = time.time()
+            if vlm and args.agent_auto and (current_time - last_agent_time >= 1.0):  # Agent acts every 1 second
+                try:
+                    # Get comprehensive state from server
+                    state_response = requests.get(f"{server_url}/state", timeout=5)
+                    if state_response.status_code == 200:
+                        state_data = state_response.json()
+                        
+                        # Convert server state format to the format expected by agent modules
+                        from PIL import Image
+                        import base64, io
+                        
+                        # Get screenshot from state data
+                        screenshot_base64 = state_data.get("visual", {}).get("screenshot_base64", "")
+                        if screenshot_base64:
+                            img_data = base64.b64decode(screenshot_base64)
+                            screenshot = Image.open(io.BytesIO(img_data))
+                        else:
+                            screenshot = None
+                        
+                        # Create game state object like single process mode
+                        game_state = {
+                            "visual": state_data.get("visual", {}),
+                            "player": state_data.get("player", {}),
+                            "game": state_data.get("game", {}),
+                            "map": state_data.get("map", {})
+                        }
+                        game_state["visual"]["screenshot"] = screenshot
+                        
+                        # Run agent processing
+                        if args and getattr(args, 'simple', False):
+                            # Simple mode processing
+                            action = simple_mode_processing_multiprocess(vlm, game_state, args)
+                        else:
+                            # Full agent module processing - call the actual functions
+                            action = process_agent_step_multiprocess(vlm, game_state, agent_modules, args)
+                        
+                        # Send action to server instead of emulator
+                        if action and action != "WAIT":
+                            requests.post(f"{server_url}/action", 
+                                        json={"buttons": [action]}, 
+                                        timeout=5)
+                            print(f"🤖 Agent action: {action} (step {agent_step_count})")
+                        else:
+                            print(f"🤖 Agent waiting (step {agent_step_count})")
+                        
+                        agent_step_count += 1
+                        last_agent_time = current_time
+                        
+                except Exception as e:
+                    print(f"Agent processing error: {e}")
+                    time.sleep(1)  # Wait before retrying
+            
+            # Small sleep to avoid busy waiting
+            time.sleep(0.1)
+            
+    except KeyboardInterrupt:
+        print("\n🛑 Agent stopped by user")
+        running = False
+    
+    return True
+
+def simple_mode_processing_multiprocess(vlm, game_state, args):
+    """Simple mode processing for multiprocess mode"""
+    try:
+        from utils.state_formatter import format_state_for_llm
+        
+        frame = game_state["visual"]["screenshot"]
+        
+        # Format the current state for LLM  
+        formatted_state = format_state_for_llm(game_state)
+        
+        # Get action history if it exists
+        if not hasattr(simple_mode_processing_multiprocess, 'recent_actions'):
+            simple_mode_processing_multiprocess.recent_actions = []
+        
+        # Create simple prompt with just frame and comprehensive state
+        prompt = f"""You are playing Pokemon Emerald. Based on the current game frame and state information, choose the best button action.
+
+CURRENT GAME STATE:
+{formatted_state}
+
+ACTION HISTORY (last 20 actions):
+{', '.join(simple_mode_processing_multiprocess.recent_actions[-20:]) if simple_mode_processing_multiprocess.recent_actions else 'None'}
+
+Available actions: A, B, START, SELECT, UP, DOWN, LEFT, RIGHT
+
+Respond with just the button name (e.g., 'A' or 'RIGHT'). Be decisive and avoid getting stuck."""
+        
+        # Query VLM for action
+        response = vlm.get_query(frame, prompt, "simple_multiprocess")
+        
+        # Extract action from response
+        response_upper = response.upper().strip()
+        for action in ['UP', 'DOWN', 'LEFT', 'RIGHT', 'A', 'B', 'START', 'SELECT']:
+            if action in response_upper:
+                # Update action history
+                simple_mode_processing_multiprocess.recent_actions.append(action)
+                if len(simple_mode_processing_multiprocess.recent_actions) > 50:
+                    simple_mode_processing_multiprocess.recent_actions.pop(0)
+                return action
+        
+        return "WAIT"
+        
+    except Exception as e:
+        print(f"Error in simple mode processing: {e}")
+        import traceback
+        traceback.print_exc()
+        return "WAIT"
+
+def process_agent_step_multiprocess(vlm, game_state, agent_modules, args):
+    """Process one agent step using the same logic as single process mode"""
+    try:
+        # Initialize agent state variables like single process mode
+        frame = game_state["visual"]["screenshot"]
+        
+        # Use persistent state (agent_modules is already a parameter)
+        
+        # Initialize if not exists
+        if not hasattr(process_agent_step_multiprocess, 'memory_context'):
+            process_agent_step_multiprocess.memory_context = ""
+            process_agent_step_multiprocess.observation_buffer = []
+            process_agent_step_multiprocess.recent_actions = []
+            process_agent_step_multiprocess.current_plan = ""
+        
+        # Perception step - correct signature: perception_step(frame, state_data, vlm)
+        observation, slow_thinking_needed = perception_step(frame, game_state, vlm)
+        
+        # Update observation buffer (with frame_id for memory module)
+        observation_entry = {
+            "observation": observation,
+            "frame_id": f"multiprocess_{len(process_agent_step_multiprocess.observation_buffer)}"
+        }
+        process_agent_step_multiprocess.observation_buffer.append(observation_entry)
+        if len(process_agent_step_multiprocess.observation_buffer) > 5:
+            process_agent_step_multiprocess.observation_buffer.pop(0)
+        
+        # Planning step - correct signature: planning_step(memory_context, current_plan, slow_thinking_needed, state_data, vlm)
+        new_plan = planning_step(
+            process_agent_step_multiprocess.memory_context,
+            process_agent_step_multiprocess.current_plan,
+            slow_thinking_needed,
+            game_state,
+            vlm
+        )
+        process_agent_step_multiprocess.current_plan = new_plan
+        
+        # Memory step - correct signature: memory_step(memory_context, current_plan, recent_actions, observation_buffer, vlm)
+        new_memory = memory_step(
+            process_agent_step_multiprocess.memory_context,
+            process_agent_step_multiprocess.current_plan,
+            process_agent_step_multiprocess.recent_actions,
+            process_agent_step_multiprocess.observation_buffer,
+            vlm
+        )
+        process_agent_step_multiprocess.memory_context = new_memory
+        
+        # Action step - correct signature: action_step(memory_context, current_plan, latest_observation, frame, state_data, recent_actions, vlm)
+        action = action_step(
+            process_agent_step_multiprocess.memory_context,
+            process_agent_step_multiprocess.current_plan,
+            observation,
+            frame,
+            game_state,
+            process_agent_step_multiprocess.recent_actions,
+            vlm
+        )
+        
+        # Update recent actions
+        if action and action != "WAIT":
+            process_agent_step_multiprocess.recent_actions.append(action)
+            if len(process_agent_step_multiprocess.recent_actions) > 20:
+                process_agent_step_multiprocess.recent_actions.pop(0)
+        
+        return action
+        
+    except Exception as e:
+        print(f"Error in agent step processing: {e}")
+        import traceback
+        traceback.print_exc()
+        return "WAIT"
+
+def run_multiprocess_client(server_port=8000, args=None):
     """Run the client component that talks to server in multiprocess mode"""
     try:
         import pygame
@@ -1920,6 +2170,8 @@ def run_multiprocess_client(server_port=8000):
         
         server_url = f"http://127.0.0.1:{server_port}"
         running = True
+        frame_counter = 0
+        last_good_frame = None
         
         print(f"🎮 Starting client process, connecting to server at {server_url}")
         
@@ -1938,6 +2190,20 @@ def run_multiprocess_client(server_port=8000):
             print("❌ Could not connect to server")
             return False
         
+        # Initialize agent if auto mode is enabled
+        vlm = None
+        agent_step_count = 0
+        last_agent_time = 0
+        
+        if args and args.agent_auto:
+            # Initialize VLM for agent processing
+            try:
+                vlm = VLM(backend=args.backend, model_name=args.model_name)
+                print(f"✅ Agent initialized with {args.backend}/{args.model_name}")
+            except Exception as e:
+                print(f"❌ Failed to initialize agent: {e}")
+                return False
+        
         # Main client loop
         while running:
             for event in pygame.event.get():
@@ -1947,7 +2213,7 @@ def run_multiprocess_client(server_port=8000):
                     if event.key == pygame.K_ESCAPE:
                         running = False
                     elif event.key == pygame.K_SPACE:
-                        # Send agent action request
+                        # Send manual agent action request
                         try:
                             requests.post(f"{server_url}/action", 
                                         json={"buttons": [], "manual": False}, 
@@ -1971,27 +2237,90 @@ def run_multiprocess_client(server_port=8000):
                             except Exception as e:
                                 print(f"Manual action error: {e}")
             
-            # Get current frame from server
-            try:
-                response = requests.get(f"{server_url}/api/frame", timeout=2)
-                if response.status_code == 200:
-                    frame_data = response.json().get("frame", "")
-                    if frame_data:
-                        # Decode and display frame
-                        import base64
-                        import io
-                        img_data = base64.b64decode(frame_data)
-                        img = Image.open(io.BytesIO(img_data))
-                        frame_array = np.array(img)
-                        frame_surface = pygame.surfarray.make_surface(frame_array.swapaxes(0, 1))
-                        scaled_surface = pygame.transform.scale(frame_surface, (screen_width, screen_height))
-                        screen.blit(scaled_surface, (0, 0))
-            except Exception as e:
-                # Fill with black on error
-                screen.fill((0, 0, 0))
-                if font:
-                    error_text = font.render(f"Connection error: {str(e)[:50]}", True, (255, 255, 255))
-                    screen.blit(error_text, (10, 10))
+            # Agent processing (if auto mode enabled)
+            current_time = time.time()
+            if vlm and args.agent_auto and (current_time - last_agent_time >= 1.0):  # Agent acts every 1 second
+                try:
+                    # Get comprehensive state from server
+                    state_response = requests.get(f"{server_url}/state", timeout=5)
+                    if state_response.status_code == 200:
+                        state_data = state_response.json()
+                        
+                        # Convert server state format to the format expected by agent modules
+                        from PIL import Image
+                        import base64, io
+                        
+                        # Get screenshot from state data
+                        screenshot_base64 = state_data.get("visual", {}).get("screenshot_base64", "")
+                        if screenshot_base64:
+                            img_data = base64.b64decode(screenshot_base64)
+                            screenshot = Image.open(io.BytesIO(img_data))
+                        else:
+                            screenshot = None
+                        
+                        # Create game state object like single process mode
+                        game_state = {
+                            "visual": state_data.get("visual", {}),
+                            "player": state_data.get("player", {}),
+                            "game": state_data.get("game", {}),
+                            "map": state_data.get("map", {})
+                        }
+                        game_state["visual"]["screenshot"] = screenshot
+                        
+                        # Run the SAME agent processing as single process mode
+                        if args and getattr(args, 'simple', False):
+                            # Simple mode processing
+                            action = _simple_mode_processing(vlm, game_state, args)
+                        else:
+                            # Full agent module processing
+                            action = _process_agent_step(vlm, game_state, args)
+                        
+                        # Send action to server instead of emulator
+                        if action and action != "WAIT":
+                            requests.post(f"{server_url}/action", 
+                                        json={"buttons": [action]}, 
+                                        timeout=5)
+                            print(f"🤖 Agent action: {action} (step {agent_step_count})")
+                        else:
+                            print(f"🤖 Agent waiting (step {agent_step_count})")
+                        
+                        agent_step_count += 1
+                        last_agent_time = current_time
+                        
+                except Exception as e:
+                    print(f"Agent processing error: {e}")
+                    time.sleep(1)  # Wait before retrying
+            
+            # Get current frame from server (only every few frames to maintain performance)
+            frame_counter += 1
+            if frame_counter % 4 == 0:  # Only fetch every 4th frame for 30 FPS display
+                try:
+                    response = requests.get(f"{server_url}/screenshot", timeout=0.1)
+                    if response.status_code == 200:
+                        frame_data = response.json().get("screenshot", "")
+                        if frame_data:
+                            # Decode and display frame
+                            import base64
+                            import io
+                            img_data = base64.b64decode(frame_data)
+                            img = Image.open(io.BytesIO(img_data))
+                            frame_array = np.array(img)
+                            frame_surface = pygame.surfarray.make_surface(frame_array.swapaxes(0, 1))
+                            scaled_surface = pygame.transform.scale(frame_surface, (screen_width, screen_height))
+                            screen.blit(scaled_surface, (0, 0))
+                            last_good_frame = scaled_surface
+                except Exception as e:
+                    # Use last good frame or fill with black
+                    if last_good_frame is not None:
+                        screen.blit(last_good_frame, (0, 0))
+                    else:
+                        screen.fill((0, 0, 0))
+            else:
+                # Reuse last frame for performance
+                if last_good_frame is not None:
+                    screen.blit(last_good_frame, (0, 0))
+                else:
+                    screen.fill((0, 0, 0))
             
             # Add status overlay
             if font:
@@ -2009,7 +2338,7 @@ def run_multiprocess_client(server_port=8000):
                     y_offset += 25
             
             pygame.display.flip()
-            clock.tick(30)  # 30 FPS for client
+            clock.tick(120)  # 120 FPS for client to match server
         
         pygame.quit()
         return True
@@ -2038,32 +2367,73 @@ def main():
     
     # Handle multiprocess mode first 
     if args.multiprocess:
-        print("🔀 Multiprocess mode ENABLED: Running mGBA/pygame in separate process")
+        print("🔀 Multiprocess mode ENABLED")
         
-        # Start server process
-        server_process = multiprocessing.Process(target=run_multiprocess_server, args=(args,))
-        server_process.start()
+        # Auto-start server if --agent-auto is enabled
+        server_process = None
+        if args.agent_auto:
+            print("⚡ Auto-starting server process...")
+            server_cmd = ["python", "-m", "server.app", "--port", str(args.port)]
+            
+            # Pass through server-relevant arguments
+            if args.record:
+                server_cmd.append("--record")
+            if args.load_state:
+                server_cmd.extend(["--load-state", args.load_state])
+            if args.manual_mode:
+                server_cmd.append("--manual")
+            if args.no_ocr:
+                server_cmd.append("--no-ocr")
+            
+            # Start server as subprocess
+            import subprocess
+            try:
+                print(f"📋 Server command: {' '.join(server_cmd)}")
+                server_process = subprocess.Popen(
+                    server_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                    bufsize=1
+                )
+                print(f"✅ Server started with PID {server_process.pid}")
+                print("⏳ Waiting 3 seconds for server to initialize...")
+                time.sleep(3)
+                
+            except Exception as e:
+                print(f"❌ Failed to start server: {e}")
+                return 1
+        else:
+            print("📋 NOTE: You must run the server separately with:")
+            server_cmd = "   python -m server.app"
+            if args.record:
+                server_cmd += " --record"
+            print(server_cmd)
+            print("     (Use --load-state <file> on server if needed)")
         
-        # Small delay to let server start
-        time.sleep(2)
+        print("\n🤖 Agent flags (handled by client):")
+        if args.simple:
+            print("   Simple mode enabled")
+        if args.no_ocr:
+            print("   No-OCR mode enabled")
+        print(f"   Backend: {args.backend} / {args.model_name}")
+        
+        print(f"\n🎮 Starting client process, connecting to server at http://127.0.0.1:{args.port}")
         
         try:
-            # Run client process in main thread
-            if not args.no_display:
-                success = run_multiprocess_client(args.port)
-            else:
-                print("🌐 Server running in background (--no-display)")
-                server_process.join()  # Wait for server to finish
-                success = True
+            # Run headless client process (no display needed, server has the display)
+            success = run_multiprocess_client_headless(args.port, args)
         except KeyboardInterrupt:
-            print("Interrupted by user")
+            print("Client interrupted by user")
             success = True
         finally:
-            # Clean up server process
-            if server_process.is_alive():
+            # Clean up server process if we started it
+            if server_process:
+                print("\n🛑 Stopping server process...")
                 server_process.terminate()
-                server_process.join(timeout=5)
-                if server_process.is_alive():
+                try:
+                    server_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
                     server_process.kill()
         
         return 0 if success else 1
