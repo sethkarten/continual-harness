@@ -5,6 +5,8 @@ Complete list of 244 objectives covering the entire Pokemon Emerald playthrough
 from tutorial through Elite Four and postgame content.
 
 This list is imported by direct_objectives.py's load_full_game_sequence() method.
+
+NOTE: For categorized objectives (story/battling), use all_obj_categorized.py instead.
 """
 
 from agent.objective_types import DirectObjective
