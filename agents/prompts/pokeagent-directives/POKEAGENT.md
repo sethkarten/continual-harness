@@ -334,7 +334,7 @@ Use this milestone map to find where you are (ACCURATE to Bulbapedia walkthrough
 - **Part 7**: Meteor Falls, Mt. Chimney, Jagged Pass, Lavaridge Town, **defeated Flannery (Heat Badge - 4th gym)**
 - **Part 8-21**: Later gym leaders and story progression
 
-### Step 3: Determine Which Part You're On
+### Step 2: Determine Which Part You're On
 **Use the HIGHEST milestone you've completed**, then add 1 for next steps.
 
 **Examples:**
