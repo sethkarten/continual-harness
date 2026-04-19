@@ -15,7 +15,8 @@ agents.md
 .DS_Store
 node_modules/
 pokemon_red_env/test/output_game_state/*
-PokemonRed-GBC/bootstrap_source
+*/*.bak
+# PokemonRed-GBC/bootstrap_source
 # -----------------------------------------------------------------------------
 # Project-specific
 # -----------------------------------------------------------------------------
