@@ -7,16 +7,9 @@ uv run python run.py --game red --backend gemini --model-name gemini-3.1-pro-pre
   --backup-state PokemonRed-GBC/red_init.zip \
   --enable-prompt-optimization --optimization-window-length 100 \
   --direct-objectives autonomous_objective_creation \
-  --direct-objectives-start 4 --run-name ae_autoevolve
+  --direct-objectives-start 4 --run-name ae_autoevolve_video
 
-# Simple scaffold (H_min: empty registry, no evolution)
-uv run python run.py --game red --backend gemini --model-name gemini-3.1-pro-preview \
-  --port 2878 --agent-auto --scaffold simple \
-  --backup-state PokemonRed-GBC/red_init.zip \
-  --direct-objectives autonomous_objective_creation \
-  --direct-objectives-start 4 --run-name ae_simple
-
-# Simplest scaffold (new H_min candidate: only press_buttons and process_memory available)
+# Simplest scaffold (H_min: only press_buttons and process_memory available)
 uv run python run.py --game red --backend gemini --model-name gemini-3.1-pro-preview \
   --port 2980 --agent-auto --scaffold simplest \
   --backup-state PokemonRed-GBC/red_init.zip \
