@@ -1618,7 +1618,7 @@ class VertexBackend(VLMBackend):
         self.system_instruction = system_instruction
 
         # Initialize VertexAI
-        vertexai.init(project="pokeagent-011", location="us-central1")
+        vertexai.init(project="INSERT_PROJECT_ID_HERE", location="us-central1")
 
         # Setup function calling if tools are provided
         if self.tools:
