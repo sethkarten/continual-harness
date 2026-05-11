@@ -26,8 +26,9 @@ pokemon_red_env/test/output_game_state/*
 
 
 # Untracked internal docs/tools
-System-Design/
 docs/
+System-Design/personal_notes/
+System-Design/plans/
 
 # Runtime and outputs
 .pokeagent_cache/

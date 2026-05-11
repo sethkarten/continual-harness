@@ -1,10 +1,10 @@
 # PokéAgent Challenge: RPG Speedrunning Agent in Pokémon Emerald & Red
 
-![PokéAgent Challenge: RPG Speedrunning Agent in Pokémon Emerald](layout.png)
+PokéAgent Challenge: RPG Speedrunning Agent in Pokémon Emerald
 
 ## Custom PokeAgent Harness
 
-![Custom PokeAgent Harness](pokeagent_architecture.png)
+Custom PokeAgent Harness
 
 ## Table of Contents
 
@@ -32,11 +32,19 @@
 
 ## Overview
 
-This project implements an AI agent capable of playing **Pokémon Emerald** (Game Boy Advance, **mGBA**) or **Pokémon Red** (Game Boy Color, **PyBoy**). Select the title with **`--game emerald`** (default) or **`--game red`** on **`run.py`** and **`run_cli.py`**; this sets **`GAME_TYPE`** for the game server and aligns prompt assets in `agents/prompts/paths.py`. `PokeAgent` uses a vision-language model (VLM) to analyze game frames, understand game state, and act via MCP-backed HTTP tools. The agent is designed to be customizable for different VLMs and behaviors.
+This project provides an open benchmark for and the implements agent systems capable of playing either **Pokemon Emerald** or **Pokemon Red**. We expose the benchmark harness, emulator integrations, agent scaffolds, and logging needed to run VLM agents.
+
+Select the title with `**--game emerald`** (default) or `**--game red**` on `**run.py**` and `**run_cli.py**`; this sets `**GAME_TYPE**` for the game server and aligns prompt assets in `agents/prompts/paths.py`. `PokeAgent` analyzes game frames, structured state, maps, objectives, and long-run memory, then acts through server-backed game tools. External CLI agents can instead connect through the restricted MCP surface exposed by `run_cli.py`.
 
 ## Architecture
 
-The system uses a **headless server**: the game and emulator run in a server process; agents and UIs run as clients. The server exposes HTTP REST and MCP endpoints; clients poll for state and submit actions.
+The system uses a **headless server**: the game and emulator run in a server process; agents and UIs run as clients. The server exposes HTTP REST endpoints and `POST /mcp/*` routes; clients poll for state and submit actions.
+
+Typical process layout:
+
+- `**run.py`** starts the FastAPI game server on `--port` and, when in agent mode, the frame stream server on `--port + 1`; the in-repo Python agent calls the game server HTTP routes directly.
+- `**run_cli.py**` starts the FastAPI game server on `--port`, the frame stream server on `--port + 1`, and an MCP proxy on `--mcp-sse-port` (default `--port + 2`) for containerized CLI agents.
+- The web UI is served from the game server at `http://localhost:{port}/stream`.
 
 For the canonical, code-grounded architecture docs, start with **[System-Design/README.md](System-Design/README.md)**.
 
@@ -45,21 +53,19 @@ For module-level detail, see the README in each area:
 - **[server/README.md](server/README.md)** — Game server, frame streaming, MCP proxy, ports and endpoints.
 - **[agents/README.md](agents/README.md)** — PokeAgent, prompts, objectives, prompt optimization, local subagents.
 - **[pokemon_env/README.md](pokemon_env/README.md)** — Emerald: mGBA emulator, memory reader, Porymap map data.
-- **`pokemon_red_env/`** — Red: PyBoy emulator, memory/map readers, Red milestones (see [System-Design/architecture/pokemon_infrastructure.md](System-Design/architecture/pokemon_infrastructure.md)).
+- `**pokemon_red_env/`** — Red: PyBoy emulator, memory/map readers, Red milestones (see [System-Design/architecture/pokemon_infrastructure.md](System-Design/architecture/pokemon_infrastructure.md)).
 - **[utils/README.md](utils/README.md)** — Mapping, persistence, VLM backends, metrics.
 
 ## Features
 
-- **Multiple VLM backends**: OpenAI, OpenRouter, Google Gemini, Anthropic (via `utils/vlm_backends.py`)
-- **External CLI backends**: Claude Code, Gemini CLI, Codex, and Hermes via `run_cli.py`
-- **Vision-based perception**: VLMs analyze game frames and state
-- **Agent scaffolds**: PokeAgent (optional trajectory-based prompt optimization via `--enable-prompt-optimization`; separate from the in-agent `subagent_reflect` tool), vision-only
-- **PokeAgent local subagents**: `subagent_reflect`, `subagent_verify`, `subagent_gym_puzzle`, and `subagent_summarize` are one-step local VLM calls; `subagent_battler` is a delegated battle loop that consumes real global steps but returns only a compacted battle summary to the orchestrator; `subagent_plan_objectives` is a delegated planning loop that can view, create, modify, and delete objectives via `replan_objectives`. Logged interaction names remain readable (`Subagent_Reflect`, `Subagent_Verify`, `Subagent_Summarize`, `Gym_Puzzle_Analysis`, `Subagent_Battler`, `Subagent_Plan_Objectives`). Trajectory logging is **primary** at `.pokeagent_cache/{run_id}/trajectory_history.jsonl` (`RunDataManager.log_trajectory`); a copy may sync to `run_data/{run_id}/trajectory_history.jsonl`.
-- **MCP support**: External CLI agents (Claude Code, Gemini CLI, Codex, Hermes) interact with the game via `pokemon_mcp_server.py` (**`get_game_state`**, **`press_buttons`** only). Containerization limits non-tool HTTP to the game server. The HTTP game server does **not** implement local subagents such as `subagent_reflect`; full orchestration tools remain on `POST /mcp/*` for in-process clients (see `server/cli/pokemon_mcp_server.py`).
+- **Multiple VLM backends**: OpenAI, OpenRouter, Google Gemini, Anthropic, and Vertex (via `utils/agent_infrastructure/vlm_backends.py`)
+- **External CLI Harnesses**: Claude Code, Gemini CLI, Codex, and Hermes via `run_cli.py`
+- **Custom Agent Harnesses**: Several harness configuration settings (i.e, AutoEvolve, PokeAgent, Simplest)
+- **PokeAgent local subagents**: Custom subagent abstractions accessible to our custom PokeAgent harness: `subagent_reflect`, `subagent_verify`, `subagent_gym_puzzle`, `subagent_summarize`, `subagent_battler`, and `subagent_plan_objectives`.
 - **Checkpoints & backups**: Save/resume runs; backups in `backups/`; analysis data in `run_data/`. Backups restore **disk** state under `.pokeagent_cache/` (objectives, long-term memory, checkpoint, trajectories file if present, etc.), not the agent’s in-memory short-term conversation window—see [utils/README.md](utils/README.md) (`data_persistence`).
-- **Metrics & logging**: Per-step and cumulative tokens, cost, actions, as well as run initialization settings are found in .pokeagent_cache/{run_id}/cumulative_metrics.json; LLM logs (llm_logs/) and other session logs are also tracked, though cumulative_metrics is the single source of truth. One-step local subagents (reflect, verify, summarize, gym puzzle) record a synthetic `tool_calls` row on their step so the interaction name is visible next to token usage (they do not invoke MCP tools).
+- **Metrics & logging**: Per-step and cumulative tokens, cost, actions, and run initialization settings are stored in `.pokeagent_cache/{run_id}/cumulative_metrics.json`; LLM logs (`llm_logs/`) and backend session logs are also tracked, though `cumulative_metrics.json` is the aggregate source of truth.
 - **Map system**: **Emerald** — Porymap integration, NPC display, movement preview, portal tracking. **Red** — `RedMapReader` / PyBoy-backed map formatting (no Porymap).
-- **Web interface**: Real-time stream at `http://localhost:8000/stream` by default. The port can be manually specified via the --port flag to both run.py and run_cli.py
+- **Web interface**: Real-time stream at `http://localhost:8000/stream` by default. The port can be manually specified via `--port` on both `run.py` and `run_cli.py`.
 - **Video recording**: Optional MP4 recording of gameplay saved to `run_data/{run_id}/end_state/videos/`
 - **Customizable prompts**: Edit prompt assets under `agents/prompts/` to directly steer agent behavior.
 
@@ -180,7 +186,7 @@ macOS (x86_64): `brew install mgba`
 - **Emerald:** `Emerald-GBAdvance/rom.gba`. US English SHA-1: `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
 - **Red:** `PokemonRed-GBC/pokered.gbc` (expected filename for `setup_environment()`).
 
-Use **`--game red|emerald`** with **`run.py`** / **`run_cli.py`** so server and agent prompts match the ROM you placed.
+Use `**--game red|emerald`** with `**run.py**` / `**run_cli.py**` so server and agent prompts match the ROM you placed.
 
 ## VLM Backend Setup (run.py)
 
@@ -203,6 +209,8 @@ python run.py --backend {backend} --model-name {name} --port 8000 --agent-auto -
 | Auto          | Any of the above                                          | `--backend auto --model-name <model-id>` (backend inferred from model name) |
 
 
+The Vertex backend is implemented in `utils/agent_infrastructure/vlm_backends.py`; Users must provide their own Google Cloud project ID (see INSERT_PROJECT_ID_HERE).
+
 ## CLI Agent Backend Setup (run_cli.py)
 
 External CLI agents (Claude Code, Gemini CLI, Codex, Hermes) connect via MCP. Set the required env / auth, then use the template below. First run with a given backend image: add `--build` so the container is built with your UID/GID.
@@ -214,30 +222,43 @@ python run_cli.py --backend {backend} --api-gateway openrouter --directive agent
 ```
 
 
-| Backend | Env / Auth                                                                                                             | Example                                                                     |
-| ------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Claude  | `claude auth login` (OAuth), or `ANTHROPIC_API_KEY`; for OpenRouter: `OPENROUTER_API_KEY` + `--api-gateway openrouter` | `--backend claude`; OpenRouter: `--backend claude --api-gateway openrouter` |
-| Gemini  | `GEMINI_API_KEY`                                                                                                       | `--backend gemini`                                                          |
-| Codex   | `codex login` or `OPENAI_API_KEY`; for OpenRouter: `OPENROUTER_API_KEY` + `--api-gateway openrouter`                   | `--backend codex`; OpenRouter: `--backend codex --api-gateway openrouter`   |
-| Hermes  | `OPENROUTER_API_KEY` with `--api-gateway openrouter`, or Hermes provider envs such as `HERMES_MODEL`, `HERMES_PROVIDER`, `HERMES_BASE_URL` | `--backend hermes --api-gateway openrouter` |
+| Backend | Env / Auth                                                                                                                                 | Example                                                                     |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| Claude  | `claude auth login` (OAuth), or `ANTHROPIC_API_KEY`; for OpenRouter: `OPENROUTER_API_KEY` + `--api-gateway openrouter`                     | `--backend claude`; OpenRouter: `--backend claude --api-gateway openrouter` |
+| Gemini  | `GEMINI_API_KEY`                                                                                                                           | `--backend gemini`                                                          |
+| Codex   | `codex login` or `OPENAI_API_KEY`; for OpenRouter: `OPENROUTER_API_KEY` + `--api-gateway openrouter`                                       | `--backend codex`; OpenRouter: `--backend codex --api-gateway openrouter`   |
+| Hermes  | `OPENROUTER_API_KEY` with `--api-gateway openrouter`, or Hermes provider envs such as `HERMES_MODEL`, `HERMES_PROVIDER`, `HERMES_BASE_URL` | `--backend hermes --api-gateway openrouter`                                 |
 
 
 CLI agents run in Docker for isolation. Use `--build` on first run (e.g. `python run_cli.py --backend claude --build --directive agents/prompts/cli-agent-directives/pokemon_directive.md`), then omit `--build` for later runs.
 
 ## Running the Agent
 
-**run.py** (in-repo agent): Starts the game server, then runs the selected agent client. Use the [VLM Backend Setup](#vlm-backend-setup-runpy) template and swap in your `--backend` and `--model-name`. Examples of common variants:
+Both entrypoints accept `--game emerald` (default) or `--game red`. This selects the emulator stack, ROM path convention, prompt assets, walkthrough parts, milestones, and the game-specific `categorized_full_game` objective sequence. Use `--game emerald` with `Emerald-GBAdvance/rom.gba`; use `--game red` with `PokemonRed-GBC/pokered.gbc`.
+
+**run.py** (in-repo agent): Starts the game server, then runs the selected agent client. Use the [VLM Backend Setup](#vlm-backend-setup-runpy) template and swap in your `--backend` and `--model-name`.
 
 ```bash
-# Load a specific state or resume from checkpoint
-python run.py --backend gemini --model-name gemini-2.5-flash --load-state Emerald-GBAdvance/splits/01_tutorial/01_tutorial.state --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
-python run.py --backend gemini --model-name gemini-2.5-flash --load-checkpoint --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
+# Emerald from the beginning
+python run.py --game emerald --backend gemini --model-name gemini-2.5-flash --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
 
-# Headless with recording
-python run.py --backend gemini --model-name gemini-2.5-flash --port 8000 --agent-auto --scaffold pokeagent --headless --record --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
+# Red from the beginning
+python run.py --game red --backend gemini --model-name gemini-2.5-flash --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
+
+# Load a game-specific state or resume from that game's checkpoint
+python run.py --game emerald --backend gemini --model-name gemini-2.5-flash --load-state Emerald-GBAdvance/splits/01_tutorial/01_tutorial.state --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
+python run.py --game red --backend gemini --model-name gemini-2.5-flash --load-checkpoint --port 8000 --agent-auto --scaffold pokeagent --direct-objectives categorized_full_game --direct-objectives-start 0 --direct-objectives-battling-start 0
 ```
 
-**run_cli.py** (external CLI agents via MCP): Starts the game server and MCP proxy; the CLI agent in the container talks to the game via MCP tools. Use the [CLI Agent Backend Setup](#cli-agent-backend-setup-run_clipy) template; set the required env/auth for your backend and add `--build` on first run.
+**run_cli.py** (external CLI agents via MCP): Starts the game server, frame server, and MCP proxy; the CLI agent in the container talks to the game through `get_game_state` and `press_buttons`. Use the [CLI Agent Backend Setup](#cli-agent-backend-setup-run_clipy) template; set the required env/auth for your backend and add `--build` on first run.
+
+```bash
+# Emerald with an external CLI agent
+python run_cli.py --game emerald --backend claude --api-gateway openrouter --directive agents/prompts/cli-agent-directives/pokemon_directive.md --port 8000
+
+# Red with an external CLI agent
+python run_cli.py --game red --backend claude --api-gateway openrouter --directive agents/prompts/cli-agent-directives/pokemon_directive.md --port 8000
+```
 
 **Debug controls (with display):** M = state overlay, Shift+M = map, S = screenshot, Tab = cycle mode, Space = one agent step, 1/2 = save/load state, arrows/WASD = move, Z/X = A/B.
 
@@ -248,14 +269,13 @@ python run.py --backend gemini --model-name gemini-2.5-flash --port 8000 --agent
 Choose behavior with `--scaffold` (default: `pokeagent`).
 
 
-| Scaffold         | Description                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------- |
-| `pokeagent`      | Default. Full tool scaffolding (built-in subagents, walkthrough/wiki/pathfinding where enabled). |
-| `simple`         | Minimal scaffold. No built-in subagent tools; keeps the generic tool registry and `replan_objectives`. |
-| `simplest`       | Smallest ablation scaffold. No built-in subagent tools, no objectives block, and no local subagent/tool registry. |
-| `autoevolve`     | Like `simple`, plus the `evolve_harness` tool. Full harness evolution runs only when `--enable-prompt-optimization` is set. |
-| `autonomous_cli` | Legacy alias for `pokeagent`.                                                             |
-| `vision_only`    | Vision-only agent (no map info, no pathfinding, button sequences).                        |
+| Scaffold         | Description                                                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `pokeagent`      | Default. Full tool scaffolding (built-in subagents, walkthrough/wiki/pathfinding where enabled).                            |
+| `simple`         | Minimal scaffold. No built-in subagent tools; keeps the generic tool registry and `replan_objectives`.                      |
+| `simplest`       | Smallest ablation scaffold. No built-in subagent tools, no objectives block, and no local subagent/tool registry.           |
+| `autoevolve`     | Like `simple`, plus the `evolve_harness` tool. Full harness evolution runs only when `--enable-prompt-optimization` is set. |                                                                                    |
+| `vision_only`    | Vision-only agent (no map info, no pathfinding, button sequences).                                                          |
 
 
 Example:
@@ -269,32 +289,32 @@ python run.py --scaffold pokeagent --agent-auto
 ### run.py
 
 
-| Flag                                     | Description                                                                                                                                              |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--game red\|emerald`                    | Which title to run; sets server **`GAME_TYPE`** and client env before agents import (default: `emerald`).                                                |
-| `--rom PATH`                             | Client-side ROM path hint (default: `Emerald-GBAdvance/rom.gba`). If `game=red` and ROM is still the default Emerald path, rewritten to `PokemonRed-GBC/pokered.gbc`. The spawned game server uses **`setup_environment()`** ROM constants, not `--rom`. |
-| `--port INT`                             | Port for the game server and web interface (default: 8000). Frame server and MCP server are accessed through at ports at a +1 and +2 offset respectively |
-| `--load-state PATH`                      | Load a saved state file on startup.                                                                                                                      |
-| `--load-checkpoint`                      | Load from checkpoint files in the run cache.                                                                                                             |
-| `--backup-state PATH`                    | Load from a backup zip; extracts to cache and loads checkpoint, metrics, and persistent knowledge (preferred for resuming a run).                        |
-| `--bootstrap-from PATH`                  | Import learned artifacts from a prior run (`memory.json`, `skills.json`, `subagents.json`, and an evolved orchestrator policy when present).            |
-| `--backend NAME`                         | VLM backend: `openai`, `gemini`, `openrouter`, `anthropic`, or `auto` (default: `gemini`).                                                               |
-| `--model-name TEXT`                      | Model name for the backend (default: `gemini-2.5-flash`).                                                                                                |
-| `--scaffold NAME`                        | Agent scaffold: `pokeagent`, `simple`, `simplest`, `autoevolve`, `autonomous_cli`, `vision_only` (default: `pokeagent`).                                  |
-| `--headless`                             | Run without the pygame display.                                                                                                                          |
-| `--agent-auto`                           | Run the agent in automatic mode (no manual stepping).                                                                                                    |
-| `--manual`                               | Start in manual mode instead of agent mode.                                                                                                              |
-| `--record`                               | Record video of gameplay to `run_data/{run_id}/end_state/videos/`.                                                                                       |
-| `--no-ocr`                               | Disable OCR dialogue detection (default: on).                                                                                                            |
-| `--direct-objectives NAME`               | Load a direct objective sequence (e.g. `categorized_full_game`, `autonomous_objective_creation`).                                                        |
-| `--direct-objectives-start INT`          | Start index for story objectives (default: 0).                                                                                                           |
-| `--direct-objectives-battling-start INT` | Start index for battling objectives in categorized mode (default: 0).                                                                                    |
-| `--clear-knowledge-base`                 | Clear `knowledge_base.json` before starting.                                                                                                             |
-| `--run-name TEXT`                        | Optional suffix for the run directory name.                                                                                                              |
-| `--enable-prompt-optimization`           | Enable reflective prompt optimization from trajectory analysis.                                                                                          |
-| `--optimization-window-length INT`       | Number of recent trajectory steps used for evolution analysis (default: 50).                                                                              |
-| `--allow-walkthrough`                    | Enable `get_walkthrough` tool (vision_only scaffold).                                                                                                    |
-| `--allow-slam`                           | Enable SLAM / map building (vision_only scaffold).                                                                                                       |
+| Flag                                     | Description                                                                                                                                                                                                                                              |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--game red|emerald`                     | Which title to run; sets server `**GAME_TYPE**` and client env before agents import (default: `emerald`).                                                                                                                                                |
+| `--rom PATH`                             | Client-side ROM path hint (default: `Emerald-GBAdvance/rom.gba`). If `game=red` and ROM is still the default Emerald path, rewritten to `PokemonRed-GBC/pokered.gbc`. The spawned game server uses `**setup_environment()**` ROM constants, not `--rom`. |
+| `--port INT`                             | Port for the game server and web interface (default: 8000). In agent mode, the frame stream server uses `port + 1`; `run.py` does not start a separate MCP proxy.                                                                                        |
+| `--load-state PATH`                      | Load a saved state file on startup.                                                                                                                                                                                                                      |
+| `--load-checkpoint`                      | Load from checkpoint files in the run cache.                                                                                                                                                                                                             |
+| `--backup-state PATH`                    | Load from a backup zip; extracts to cache and loads checkpoint, metrics, and persistent knowledge (preferred for resuming a run).                                                                                                                        |
+| `--bootstrap-from PATH`                  | Import learned artifacts from a prior run (`memory.json`, `skills.json`, `subagents.json`, and an evolved orchestrator policy when present).                                                                                                             |
+| `--backend NAME`                         | VLM backend: `openai`, `gemini`, `openrouter`, `anthropic`, `vertex`, or `auto` (default: `gemini`).                                                                                                                                                     |
+| `--model-name TEXT`                      | Model name for the backend (default: `gemini-2.5-flash`).                                                                                                                                                                                                |
+| `--scaffold NAME`                        | Agent scaffold: `pokeagent`, `simple`, `simplest`, `autoevolve`, `autonomous_cli`, `vision_only` (default: `pokeagent`).                                                                                                                                 |
+| `--headless`                             | Run without the pygame display.                                                                                                                                                                                                                          |
+| `--agent-auto`                           | Run the agent in automatic mode (no manual stepping).                                                                                                                                                                                                    |
+| `--manual`                               | Start in manual mode instead of agent mode.                                                                                                                                                                                                              |
+| `--record`                               | Record video of gameplay to `run_data/{run_id}/end_state/videos/`.                                                                                                                                                                                       |
+| `--no-ocr`                               | Disable OCR dialogue detection. In the current launchers this is already disabled by default and the flag is retained for compatibility.                                                                                                                 |
+| `--direct-objectives NAME`               | Load a direct objective sequence (e.g. `categorized_full_game`, `autonomous_objective_creation`).                                                                                                                                                        |
+| `--direct-objectives-start INT`          | Start index for story objectives (default: 0).                                                                                                                                                                                                           |
+| `--direct-objectives-battling-start INT` | Start index for battling objectives in categorized mode (default: 0).                                                                                                                                                                                    |
+| `--clear-knowledge-base`                 | Clear `knowledge_base.json` before starting.                                                                                                                                                                                                             |
+| `--run-name TEXT`                        | Optional suffix for the run directory name.                                                                                                                                                                                                              |
+| `--enable-prompt-optimization`           | Enable reflective prompt optimization from trajectory analysis.                                                                                                                                                                                          |
+| `--optimization-window-length INT`       | Number of recent trajectory steps used for evolution analysis (default: 50).                                                                                                                                                                             |
+| `--allow-walkthrough`                    | Enable `get_walkthrough` tool (vision_only scaffold).                                                                                                                                                                                                    |
+| `--allow-slam`                           | Enable SLAM / map building (vision_only scaffold).                                                                                                                                                                                                       |
 
 
 ### run_cli.py
@@ -302,11 +322,11 @@ python run.py --scaffold pokeagent --agent-auto
 
 | Flag                            | Description                                                                                                                                                             |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--backend NAME`                | CLI agent backend: `claude`, `gemini`, `codex`, or `hermes` (default: `claude`).                                                                                       |
+| `--backend NAME`                | CLI agent backend: `claude`, `gemini`, `codex`, or `hermes` (default: `claude`).                                                                                        |
 | `--api-gateway NAME`            | Auth: `login` (OAuth/subscription, default) or `openrouter` (uses `OPENROUTER_API_KEY`).                                                                                |
 | `--login`                       | Run backend-specific auth login before starting (e.g. `claude auth login`).                                                                                             |
 | `--directive PATH`              | Path to system prompt/directive file for the CLI agent (default: repo CLI directive).                                                                                   |
-| `--port INT`                    | Port for the game server (default: 8000).                                                                                                                               |
+| `--port INT`                    | Port for the game server and web interface (default: 8000). The frame stream server uses `port + 1`; the MCP proxy defaults to `port + 2`.                              |
 | `--load-state PATH`             | Load a saved state file on startup.                                                                                                                                     |
 | `--load-checkpoint`             | Load from checkpoint files in the run cache.                                                                                                                            |
 | `--backup-state PATH`           | Load from a backup zip; extracts to cache and enables checkpoint load.                                                                                                  |
@@ -315,19 +335,19 @@ python run.py --scaffold pokeagent --agent-auto
 | `--poll-interval INT`           | Seconds between termination checks (default: 10).                                                                                                                       |
 | `--graceful-timeout INT`        | Seconds to wait for graceful shutdown before force kill (default: 30).                                                                                                  |
 | `--record`                      | Record video of gameplay.                                                                                                                                               |
-| `--no-ocr`                      | Disable OCR dialogue detection (default: on).                                                                                                                           |
+| `--no-ocr`                      | Disable OCR dialogue detection. In the current launcher this is already disabled by default and the flag is retained for compatibility.                                 |
 | `--direct-objectives NAME`      | Load a specific direct objective sequence.                                                                                                                              |
 | `--direct-objectives-start INT` | Start index for direct objectives (default: 0).                                                                                                                         |
 | `--run-name TEXT`               | Optional name for the run directory.                                                                                                                                    |
 | `--build`                       | Build the container image before running (recommended so files are owned by your user).                                                                                 |
 | `--mcp-sse-port INT`            | Port for MCP SSE server (default: game port + 2).                                                                                                                       |
-| `--game red\|emerald`           | Same semantics as `run.py`: game server + `GAME_TYPE` + host prompt resolution (default: `emerald`).                                                                   |
+| `--game red|emerald`            | Same semantics as `run.py`: game server + `GAME_TYPE` + host prompt resolution (default: `emerald`).                                                                    |
 | `--agent-thinking-effort LEVEL` | Reasoning/thinking effort for CLI agent: `low`, `medium`, or `high` (Claude: `--thinking-budget`; Codex: `-c model_reasoning_effort`; Gemini: `modelConfigs` override). |
 
 
 ## Customizing Agent Behavior (Prompt Editing Guide)
 
-- **Prompt files**: `agents/prompts/` holds `pokeagent-directives/` and `cli-agent-directives/`; `agents/prompts/paths.py` picks **Red vs Emerald** markdown from **`GAME_TYPE`** (set before importing agents in `run.py`). Paths are repo-root-relative.
+- **Prompt files**: `agents/prompts/` holds `pokeagent-directives/` and `cli-agent-directives/`; `agents/prompts/paths.py` picks **Red vs Emerald** markdown from `**GAME_TYPE`** (set before importing agents in `run.py`). Paths are repo-root-relative.
 - **Main benchmark agent**: `agents/PokeAgent.py`.
 - **Vision-only variant**: `agents/vision_only_agent.py`.
 
@@ -335,7 +355,7 @@ Edit the prompts in those files and restart the agent. Use `--debug-state` for d
 
 ## Advanced Configuration
 
-- **Environment**: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`; optional `PYTHONPATH` for development.
+- **Environment**: `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, and Google Cloud auth for Vertex; optional `PYTHONPATH` for development.
 - **Persistence**: Checkpoints and run data are under `.pokeagent_cache/{run_id}/` and `run_data/{run_id}/`. Backups of `.pokeagent_cache/{run_id}/` are created on objective completion and, for CLI or objective-free runs, on milestone completion. Finalized runs also export reusable bootstrap bundles under both `.pokeagent_cache/{run_id}/bootstrap/` and `run_data/{run_id}/end_state/game_state/bootstrap/`. **Emerald** milestone ordering comes from `MILESTONE_PHASES` / `ORDERED_PROGRESS_MILESTONES` in `pokemon_env/emulator.py`; **Red** uses `RED_MILESTONES_ORDER` in `pokemon_red_env/red_emulator.py`. See [utils/README.md](utils/README.md) for layout.
 - **Metrics**: `cumulative_metrics.json` (in cache) and LLM logs; see [utils/README.md](utils/README.md).
 
@@ -344,15 +364,6 @@ Edit the prompts in those files and restart the agent. Use `--debug-state` for d
 - **Module not found**: Ensure deps are installed (`uv sync` or `pip install -r requirements.txt`) and `PYTHONPATH` includes the repo root if needed.
 - **Web UI**: Ensure the server is running and the port (default 8000) is free; open `http://localhost:8000/stream`. You may need to forward the port to your local machine if you are connected via ssh
 
-## Fair Use and Modification Guidelines
-
-**Allowed:** Changing agent behavior (prompts, planning, memory), adding or changing VLM backends in `utils/agent_infrastructure/vlm_backends.py`, improving logging, tests, docs, performance, UI, and utilities.
-
-**Not allowed (for competitive submissions):** Modifying `pokemon_env/memory_reader.py` or memory-reading logic, changing how game state is extracted, altering emulator core or anti-cheat, or manipulating game memory outside normal button input.
-
-## Submission Instructions
-
-Submission requirements, how to submit, evaluation criteria, and tips for success are coming soon. All submission infrastructure will live at **[pokeagentchallenge.com](https://pokeagentchallenge.com)**.
 
 ## Citation
 
