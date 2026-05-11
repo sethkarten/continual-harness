@@ -1,12 +1,12 @@
 # External MCP Agents Architecture (Containerized)
 
-This document describes the architecture for running external CLI agents (**Claude Code** and **Gemini CLI**) in secure, containerized environments to play **Pokémon Emerald or Pokémon Red** via MCP (Model Context Protocol). Game title is selected with **`run_cli.py --game red|emerald`** (passed through to the game server and **`GAME_TYPE`** for prompt resolution on the host).
+This document describes the architecture for running external CLI agents (**Claude Code**, **Gemini CLI**, **Codex**, and **Hermes**) in secure, containerized environments to play **Pokémon Emerald or Pokémon Red** via MCP (Model Context Protocol). Game title is selected with **`run_cli.py --game red|emerald`** (passed through to the game server and **`GAME_TYPE`** for prompt resolution on the host).
 
 ## Overview
 
 Unlike the internal Python agents (e.g. `PokeAgent`, `VisionOnlyAgent`) which run in the same process tree as the game client, **External MCP Agents** run as completely separate processes—typically inside a Docker container for isolation—and communicate with the game via a standardized MCP server.
 
-This architecture allows us to use powerful, proprietary agentic tools (Anthropic's Claude Code, Google's Gemini CLI) which require their own runtime environment, while keeping the game infrastructure secure and stable.
+This architecture allows us to use agentic tools that require their own runtime environments while keeping the game infrastructure isolated and stable.
 
 The backend system is polymorphic: `run_cli.py` operates through the `CliAgentBackend` abstract base class (`utils/agent_infrastructure/cli_agent_backends.py`), with concrete implementations `ClaudeCodeBackend`, `GeminiCliBackend`, `CodexCliBackend`, and `HermesCliBackend`. Backend selection is via `--backend {claude,gemini,codex,hermes}`.
 
@@ -19,14 +19,14 @@ Runs the game infrastructure and orchestration.
 
 1.  **Orchestrator (`run_cli.py`)**:
     *   Entry point for the experiment.
-    *   Spawns the Game Server, Frame Server, and MCP SSE Server.
+    *   Spawns the Game Server, Frame Server, and MCP proxy.
     *   Launches the Docker container for the selected agent backend.
     *   Monitors the game state for termination conditions (e.g. badge count).
     *   Uses polymorphic calls: `backend.build_launch_cmd()`, `backend.log_cli_interaction()`, `backend.get_resume_session_id()`, `backend.run_login()`.
 
 2.  **Game Server (`server/app.py`)**: Runs the in-process emulator (**mGBA + `EmeraldEmulator`** for Emerald, **PyBoy + `RedEmulator`** for Red) with HTTP endpoints.
 
-3.  **MCP SSE Server (`server/cli/pokemon_mcp_server.py`)**: Exposes **two** registered tools (`get_game_state`, `press_buttons`) via SSE transport, reachable from containers via `host.docker.internal`. (`navigate_to` is not registered for MCP; see [client_server.md](client_server.md) MCP proxy section.)
+3.  **MCP Proxy (`server/cli/pokemon_mcp_server.py`)**: Exposes **two** registered tools (`get_game_state`, `press_buttons`) from the host, reachable from containers via `host.docker.internal`. Claude, Gemini, and Codex use the SSE-facing surface; Hermes container mode uses streamable HTTP at `/mcp`. (`navigate_to` is not registered for CLI MCP; see [client_server.md](../client_server.md).)
 
 ### Container Environments
 
@@ -57,7 +57,7 @@ Each backend has its own devcontainer under `.devcontainer/`:
 *   **Image**: `python:3.11-bookworm` + NousResearch `hermes-agent` (from `.devcontainer/hermes-agent/`)
 *   **User**: `hermes-agent` (UID/GID matched to host)
 *   **Auth**: OpenRouter via `OPENROUTER_API_KEY` when `--api-gateway openrouter`; otherwise `HERMES_MODEL`, `HERMES_PROVIDER`, `HERMES_BASE_URL`, `HERMES_API_KEY_ENV`
-*   **MCP Config**: `config.yaml` in `~/.hermes` (injected block with pokemon-emerald SSE URL or command)
+*   **MCP Config**: `config.yaml` in `~/.hermes` (injected block points Hermes at streamable HTTP `/mcp`, not SSE)
 *   **Wrapper**: `hermes_wrapper.py` adapts AIAgent callbacks to JSONL stdout (system, thinking, tool_use, result, error)
 *   **Multimodal**: Patched MCP handlers capture image blocks from `get_game_state` and inject as synthetic user messages. Disable with `HERMES_DISABLE_MULTIMODAL=1`. Vision timeout: `HERMES_VISION_TIMEOUT` (default 10s), fallback to text-only on timeout.
 *   **Env passthrough**: `HERMES_DISABLE_MULTIMODAL`, `HERMES_API_TIMEOUT`, `HERMES_VISION_TIMEOUT`
@@ -92,17 +92,16 @@ python run_cli.py --backend claude --api-gateway openrouter --directive agents/p
 sequenceDiagram
     participant Host as run_cli.py
     participant GS as Game Server (8000)
-    participant MCP as MCP SSE Server (8002)
+    participant MCP as MCP Proxy (8002)
     participant Agent as CLI Agent Container
 
     Host->>GS: Spawn Process
-    Host->>MCP: Spawn Process (Transport=SSE)
+    Host->>MCP: Spawn Process
     Host->>Agent: Docker Run (Mounts, Envs)
     
     Note over Agent: init-firewall.sh applies rules
     
-    Agent->>MCP: SSE Connection (GET /sse)
-    MCP-->>Agent: Connection Established
+    Note over Agent,MCP: Claude/Gemini/Codex use SSE; Hermes uses streamable HTTP /mcp
     
     loop Agent Loop
         Agent->>MCP: Call Tool (get_game_state / press_buttons)
@@ -162,7 +161,7 @@ When running the Gemini agent in containerized mode, the following messages may 
 | `Timeout of 30000 exceeds the interval of 10000. Clamping...` | Gemini CLI internal MCP/SSE client adjusts a timeout to the polling interval. | None; harmless. |
 | `The 'metricReader' option is deprecated. Please use 'metricReaders' instead.` | Gemini CLI uses a deprecated OpenTelemetry config key. | None until we control the CLI config; or upgrade `@google/gemini-cli` when a fix is released. |
 | `YOLO mode is enabled. All tool calls will be automatically approved.` | Printed by the CLI when `--yolo` is used; may appear twice (startup). | None. |
-| `MCP server 'pokemon-emerald': HTTP connection failed, attempting SSE fallback...` / `Successfully connected using SSE transport.` | In the container, the agent is configured to use SSE for MCP; the client tries HTTP first, then falls back to SSE. | None; SSE is the intended transport for containerized runs. |
+| `MCP server 'pokemon-emerald': HTTP connection failed, attempting SSE fallback...` / `Successfully connected using SSE transport.` | Expected for backends configured for SSE transport; the client may probe HTTP first, then fall back to SSE. | None. |
 
 ## 8. Known Behaviors (Hermes)
 

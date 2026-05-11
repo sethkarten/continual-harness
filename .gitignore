@@ -164,6 +164,7 @@ backups/
 .pokeagent_cache/*
 run_data/*
 server/agent_thinking.txt
+
 # tests
 PokemonRed-GBC/test_states/*
 pokemon_red_env/test/output/*
@@ -177,8 +178,5 @@ celerybeat-schedule
 celerybeat.pid
 *.sage.py
 
-# TEMP
-research-paper/
-thesis/
-paper-data/
-bootstrap/
+# research
+research-artifacts/
