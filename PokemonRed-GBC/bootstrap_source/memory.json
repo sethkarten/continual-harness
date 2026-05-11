@@ -1,0 +1,345 @@
+{
+  "next_id": 8,
+  "entries": {
+    "mem_0001": {
+      "id": "mem_0001",
+      "path": "inventory/items",
+      "title": "Obtained Potion from PC",
+      "content": "Withdrew 1 Potion from the PC in Red's room. This is a useful healing item for the early game.",
+      "location": "RedsHouse2f",
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-03-26T23:59:23.655588",
+      "updated_at": "2026-03-26T23:59:23.655588",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mem_0002": {
+      "id": "mem_0002",
+      "path": "story/starter",
+      "title": "Selected Starter Charmander",
+      "content": "Chose Charmander as the starter Pokemon in Oak's Lab.",
+      "location": "OaksLab",
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-03-27T00:07:46.638564",
+      "updated_at": "2026-03-27T00:07:46.638564",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "rival_battle_1": {
+      "id": "rival_battle_1",
+      "path": "story/battles",
+      "title": "First Rival Battle",
+      "content": "Defeated rival BLUE in Oak's Lab after choosing starter. Charmander leveled up to 6.",
+      "location": "OaksLab",
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T04:13:26.968705",
+      "updated_at": "2026-04-12T04:13:26.968705",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mem_0003": {
+      "id": "mem_0003",
+      "path": "inventory/key_items",
+      "title": "Oak's Parcel",
+      "content": "Obtained Oak's Parcel from the Viridian City Pokemart. Needs to be delivered to Prof. Oak in Pallet Town.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T04:35:01.310596",
+      "updated_at": "2026-04-12T04:35:01.310596",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mem_0004": {
+      "id": "mem_0004",
+      "path": "inventory/key_items",
+      "title": "Pokedex",
+      "content": "Received the Pokedex from Professor Oak in Pallet Town.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T04:53:12.361458",
+      "updated_at": "2026-04-12T04:53:12.361458",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "viridian_forest_route": {
+      "id": "viridian_forest_route",
+      "path": "locations/viridian_forest",
+      "title": "Viridian Forest Route",
+      "content": "To navigate Viridian Forest from South (17,47) to North (1,0), you must take a complex S-shape route due to continuous vertical tree walls: 1. UP to Y=43, RIGHT to X=26. 2. UP to Y=33, RIGHT to X=31. 3. UP to Y=10, LEFT to X=17. 4. DOWN to Y=17, LEFT to X=11. 5. UP to Y=3, LEFT to X=6. 6. DOWN to Y=26, LEFT to X=1. 7. UP to Y=0.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T05:28:06.178143",
+      "updated_at": "2026-04-12T05:28:06.178143",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mt_moon_b2f_layout_east": {
+      "id": "mt_moon_b2f_layout_east",
+      "path": "locations/mt_moon",
+      "title": "Mt. Moon B2F East Area Layout",
+      "content": "Mt. Moon B2F is fragmented into multiple disconnected sections. The eastern section (accessible from a ladder to B1F at (15, 27)) contains a Rocket Grunt at (15, 24). This section is a dead end, so you must return up the ladder at (15, 27) after defeating the Grunt.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T08:27:51.772433",
+      "updated_at": "2026-04-12T08:39:43.194525",
+      "importance": 4,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": [
+        {
+          "timestamp": "2026-04-12T08:39:43.194525",
+          "fields": {
+            "content": {
+              "old": "Mt. Moon B2F is fragmented into multiple disconnected sections. The eastern section (accessible from a ladder to B1F) contains a Rocket Grunt at (15, 24), an HP UP item (O) at (25, 21), and the ladder back up to B1F at (15, 27).",
+              "new": "Mt. Moon B2F is fragmented into multiple disconnected sections. The eastern section (accessible from a ladder to B1F at (15, 27)) contains a Rocket Grunt at (15, 24). This section is a dead end, so you must return up the ladder at (15, 27) after defeating the Grunt."
+            }
+          }
+        }
+      ]
+    },
+    "mt_moon_b2f_west_dead_end": {
+      "id": "mt_moon_b2f_west_dead_end",
+      "path": "locations/mt_moon",
+      "title": "Mt. Moon B2F West Dead End",
+      "content": "The ladder at (13, 27) on Mt. Moon B1F leads to an isolated section of B2F starting at (15, 27). This area contains a Team Rocket Grunt at (15, 22) and an HP UP item at (25, 21). It is a dead end and does not lead to Route 4. Return to B1F to find another ladder to progress the story.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T10:03:28.787074",
+      "updated_at": "2026-04-12T10:03:28.787074",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mt_moon_b2f_east_dead_end": {
+      "id": "mt_moon_b2f_east_dead_end",
+      "path": "locations/mt_moon",
+      "title": "Mt. Moon B2F East Dead End",
+      "content": "The ladder at (17, 11) on B1F leads to an isolated section of B2F containing a Team Rocket Grunt and a hidden Ether at (33, 9). It is a dead end. After collecting the item, return to B1F.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T10:11:47.161874",
+      "updated_at": "2026-04-12T10:20:11.004235",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": [
+        {
+          "timestamp": "2026-04-12T10:20:11.004235",
+          "fields": {
+            "content": {
+              "old": "The ladder at (25, 9) on B1F leads to an isolated section of B2F containing a Team Rocket Grunt and TM01 Mega Punch at (29, 5). It is a dead end. After collecting the TM, return to B1F.",
+              "new": "The ladder at (17, 11) on B1F leads to an isolated section of B2F containing a Team Rocket Grunt and a hidden Ether at (33, 9). It is a dead end. After collecting the item, return to B1F."
+            }
+          }
+        }
+      ]
+    },
+    "mt_moon_true_topology": {
+      "id": "mt_moon_true_topology",
+      "path": "locations/mt_moon",
+      "title": "Mt. Moon True Topology",
+      "content": "Mt Moon DEFINITIVE Topology:\n1) 1F (25, 9) -> B1F (25, 9) -> B2F (25, 9): Dead end with TM01.\n2) 1F (25, 15) -> B1F (25, 15) -> walk to B1F (13, 27) -> B2F (15, 27): Dead end with HP UP.\n3) 1F (5, 5) -> B1F (5, 5) -> walk to B1F (21, 17) -> B2F (21, 17): TRUE MAIN PATH. Connects to Super Nerd (12, 8) and exit ladder B2F (5, 7).",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T11:01:17.375651",
+      "updated_at": "2026-04-12T11:42:52.270262",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": [
+        {
+          "timestamp": "2026-04-12T11:42:52.270262",
+          "fields": {
+            "content": {
+              "old": "Mt Moon has 3 main ladders on 1F. 1) (5,5) leads to B2F top-right dead end. 2) (25,9) leads to the SAME B2F top-right dead end (contains TM01). 3) (25,15) is the TRUE MAIN PATH. It leads to B1F (25,15), walk south to B1F (13,27), warp to B2F (15,27). From B2F (15,27), walk south to y=31, left, and north to the fossils and Super Nerd. Then take B2F (5,7) to exit the dungeon.",
+              "new": "Mt Moon DEFINITIVE Topology:\n1) 1F (25, 9) -> B1F (25, 9) -> B2F (25, 9): Dead end with TM01.\n2) 1F (25, 15) -> B1F (25, 15) -> walk to B1F (13, 27) -> B2F (15, 27): Dead end with HP UP.\n3) 1F (5, 5) -> B1F (5, 5) -> walk to B1F (21, 17) -> B2F (21, 17): TRUE MAIN PATH. Connects to Super Nerd (12, 8) and exit ladder B2F (5, 7)."
+            }
+          }
+        }
+      ]
+    },
+    "mem_0005": {
+      "id": "mem_0005",
+      "path": "story/items",
+      "title": "Obtained Helix Fossil",
+      "content": "Defeated the Super Nerd in Mt. Moon B2F and chose the Helix Fossil. The Dome Fossil was taken by the Super Nerd.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T12:37:04.466282",
+      "updated_at": "2026-04-12T12:37:04.466282",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mem_0006": {
+      "id": "mem_0006",
+      "path": "inventory/key_items",
+      "title": "Obtained S.S. Ticket",
+      "content": "Received the S.S. Ticket from Bill after using the Cell Separator in his house on Route 25.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T15:47:52.945159",
+      "updated_at": "2026-04-12T15:47:52.945159",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "cerulean_south_exit": {
+      "id": "cerulean_south_exit",
+      "path": "locations/cerulean_city",
+      "title": "Cerulean City South Exit Route",
+      "content": "The central paths south out of Cerulean City are blocked by walls, signs, and a cuttable tree. The ONLY way to reach Route 5 without HM01 Cut is to enter the Burgled House (x=27, y=11), exit through the back, and walk down the eastern alley (x=36).",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T16:52:16.603110",
+      "updated_at": "2026-04-12T16:52:16.603110",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "obtained_hm01_cut": {
+      "id": "obtained_hm01_cut",
+      "path": "inventory/key_items",
+      "title": "Obtained HM01 Cut",
+      "content": "Obtained HM01 Cut from the Captain on the S.S. Anne.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T19:36:21.053088",
+      "updated_at": "2026-04-12T19:36:21.053088",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "mem_0007": {
+      "id": "mem_0007",
+      "path": "mechanics/hms",
+      "title": "CUT requires Cascade Badge",
+      "content": "To use HM01 CUT outside of battle to clear trees, you must first obtain the Cascade Badge by defeating Misty at the Cerulean City Gym.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T20:13:00.589029",
+      "updated_at": "2026-04-12T20:13:00.589029",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "cerulean_south_detour": {
+      "id": "cerulean_south_detour",
+      "path": "locations/cerulean_city",
+      "title": "Cerulean South Accessible",
+      "content": "You CAN reach Cerulean Gym from Route 5. The path is open. The ledges can be navigated around. The code previously confirmed min_y_reachable was 0 and reachable_tiles was 649.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T20:40:28.895011",
+      "updated_at": "2026-04-12T20:56:47.227944",
+      "importance": 3,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": [
+        {
+          "timestamp": "2026-04-12T20:44:56.044035",
+          "fields": {
+            "content": {
+              "old": "If you are on the south side of Cerulean (from Route 5) and lack the Cascade Badge, you are blocked by a Cut tree and one-way ledges. To return to the main city, take the long detour: Route 5 -> Underground Path -> Route 6 -> Vermilion City -> Diglett's Cave -> Route 2 (East) -> Gatehouse -> jump ledge south to Viridian City -> North through Pewter/Mt. Moon -> Cerulean City.",
+              "new": "Warning: When navigating Cerulean City from the south, do NOT jump the one-way ledges or walk right to the Cut tree if you lack the Cascade Badge, as it will block you and force you to detour. The Gym is directly accessible from the Route 5 entrance if you path carefully and avoid the ledges."
+            },
+            "title": {
+              "old": "Cerulean South Blockade Detour",
+              "new": "Cerulean City Ledge Hazard"
+            }
+          }
+        },
+        {
+          "timestamp": "2026-04-12T20:49:20.003390",
+          "fields": {
+            "title": {
+              "old": "Cerulean City Ledge Hazard",
+              "new": "Cerulean South Blockade (CONFIRMED)"
+            },
+            "content": {
+              "old": "Warning: When navigating Cerulean City from the south, do NOT jump the one-way ledges or walk right to the Cut tree if you lack the Cascade Badge, as it will block you and force you to detour. The Gym is directly accessible from the Route 5 entrance if you path carefully and avoid the ledges.",
+              "new": "CRITICAL: The south entrance to Cerulean City is COMPLETELY BLOCKED if you lack the Cascade Badge. You cannot reach the Gym from Route 5. The path at X=16,17 is blocked by a wall and a sign (!). The right side (X=36) is a dead end. The only way back to Cerulean is the massive Diglett's Cave detour: Route 5 -> Underground Path -> Route 6 -> Vermilion City -> Diglett's Cave -> Route 2 -> Viridian -> Pewter -> Mt. Moon -> Cerulean North. DO NOT TRY TO WALK NORTH FROM ROUTE 5."
+            }
+          }
+        },
+        {
+          "timestamp": "2026-04-12T20:56:47.227944",
+          "fields": {
+            "title": {
+              "old": "Cerulean South Blockade (CONFIRMED)",
+              "new": "Cerulean South Accessible"
+            },
+            "content": {
+              "old": "CRITICAL: The south entrance to Cerulean City is COMPLETELY BLOCKED if you lack the Cascade Badge. You cannot reach the Gym from Route 5. The path at X=16,17 is blocked by a wall and a sign (!). The right side (X=36) is a dead end. The only way back to Cerulean is the massive Diglett's Cave detour: Route 5 -> Underground Path -> Route 6 -> Vermilion City -> Diglett's Cave -> Route 2 -> Viridian -> Pewter -> Mt. Moon -> Cerulean North. DO NOT TRY TO WALK NORTH FROM ROUTE 5.",
+              "new": "You CAN reach Cerulean Gym from Route 5. The path is open. The ledges can be navigated around. The code previously confirmed min_y_reachable was 0 and reachable_tiles was 649."
+            }
+          }
+        }
+      ]
+    },
+    "obtained_cascade_badge": {
+      "id": "obtained_cascade_badge",
+      "path": "story/badges",
+      "title": "Obtained Cascade Badge",
+      "content": "Defeated Gym Leader Misty in Cerulean City and obtained the Cascade Badge. This badge unlocks the ability to use HM01 CUT in the overworld to clear trees.",
+      "location": null,
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T21:30:06.039770",
+      "updated_at": "2026-04-12T21:30:06.039770",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    },
+    "obtained_thunder_badge": {
+      "id": "obtained_thunder_badge",
+      "path": "story/badges",
+      "title": "Obtained Thunder Badge",
+      "content": "Defeated Lt. Surge in Vermilion Gym. Received the Thunder Badge and TM24 (Thunderbolt).",
+      "location": "Vermilion Gym",
+      "coordinates": null,
+      "tags": [],
+      "created_at": "2026-04-12T22:27:27.947456",
+      "updated_at": "2026-04-12T22:27:27.947456",
+      "importance": 5,
+      "source": "orchestrator",
+      "last_modified_step": null,
+      "mutation_history": []
+    }
+  }
+}
