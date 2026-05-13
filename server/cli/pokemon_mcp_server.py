@@ -19,8 +19,8 @@ exposed to CLI agents as that may enable inappropriate direct modification
 of the game state (i.e. manually loading of save states) or access to 
 unwarranted context.
 
-Available tools (3 total):
-  Game: get_game_state, press_buttons, navigate_to
+Available tools (2 total):
+  Game: get_game_state, press_buttons
 """
 
 import logging
@@ -153,7 +153,26 @@ def press_buttons(
     return _post("/mcp/press_buttons", body)
 
 
-@mcp.tool()
+# ---------------------------------------------------------------------------
+# Removed tools for CLI agent experiments:
+# - Memory tools (add_memory, search_memory, get_memory_summary)
+#   CLI agents may implement their own internal memory systems
+# - Wiki tools (lookup_pokemon_info, list_wiki_sources, get_walkthrough)
+#   CLI agents may access web information through their native capabilities
+# - Objective tools (complete_direct_objective, replan_objectives, get_progress_summary)
+#   CLI agents may use their own abstractions for creating and tracking the
+#   completion of objectives. Milestones are used for progress internal metric tracking 
+#   in .pokeagent_cache/{run_id}/cumulative_metrics.json.
+# - Navigation tools (navigate_to)
+#   CLI agents must use press_buttons for all movement.
+# - Reflection tools (reflect)
+#   CLI agents may implement their own abstractions for reflection.
+#
+# These tools remain accessible to VLM agents via mappings in 
+# MCPToolAdapter to direct endpoints in app.py 
+# ---------------------------------------------------------------------------
+
+# @mcp.tool()
 def navigate_to(
     x: int,
     y: int,
@@ -187,23 +206,6 @@ def navigate_to(
         body["blocked_coords"] = blocked_coords
     return _post("/mcp/navigate_to", body)
 
-
-# ---------------------------------------------------------------------------
-# Removed tools for CLI agent experiments:
-# - Knowledge tools (add_knowledge, search_knowledge, get_knowledge_summary)
-#   CLI agents may implement their own internal memory systems
-# - Wiki tools (lookup_pokemon_info, list_wiki_sources, get_walkthrough)
-#   CLI agents may access web information through their native capabilities
-# - Objective tools (complete_direct_objective, create_direct_objectives, get_progress_summary)
-#   CLI agents may use their own abstractions for creating and tracking the
-#   completion of objectives. Milestones are used for progress internal metric tracking 
-#   in .pokeagent_cache/{run_id}/cumulative_metrics.json.
-# - Reflection tools (reflect)
-#   CLI agents may implement their own abstractions for reflection.
-#
-# These tools remain accessible to VLM agents via mappings in 
-# MCPToolAdapter to direct endpoints in app.py 
-# ---------------------------------------------------------------------------
 
 # @mcp.tool()
 def lookup_pokemon_info(topic: str, source: str = "bulbapedia") -> dict:
@@ -309,49 +311,16 @@ def complete_direct_objective(
 
 
 # @mcp.tool()
-def create_direct_objectives(
-    objectives: List[Dict[str, Any]],
-    reasoning: str = "",
-    category: str = "",
-) -> dict:
-    """
-    Create the next 3 direct objectives dynamically.
-    Use this after completing all objectives in a sequence to plan your next steps.
-
-    Args:
-        objectives: List of exactly 3 objective dicts, each with:
-            - id (str): Unique objective identifier
-            - description (str): What needs to be done
-            - action_type (str): Type of action (navigate, interact, battle, create_new_objectives)
-            - target_location (str, optional): Where this takes place
-            - navigation_hint (str, optional): How to get there
-            - completion_condition (str, optional): How to know it's done
-            - priority (int, optional): Priority level
-        reasoning: Why these objectives were chosen
-        category: Category for categorized mode (story, battling, dynamics)
-
-    Returns:
-        Dictionary with success status and next objective guidance
-    """
-    body: Dict[str, Any] = {"objectives": objectives}
-    if reasoning:
-        body["reasoning"] = reasoning
-    if category:
-        body["category"] = category
-    return _post("/mcp/create_direct_objectives", body)
-
-
-# @mcp.tool()
 def get_progress_summary() -> dict:
     """
-    Get comprehensive progress summary including milestones, completed objectives, and knowledge.
+    Get comprehensive progress summary including milestones, completed objectives, and memory.
     Use this to review your overall progress and plan next steps.
 
     Returns:
         Dictionary with success status and progress data including:
         - Milestones completed
         - Direct objectives status
-        - Knowledge base summary
+        - Memory summary
         - Current location and coordinates
     """
     return _post("/mcp/get_progress_summary", timeout=_TIMEOUT_SHORT)
@@ -408,10 +377,10 @@ if __name__ == "__main__":
     logger.info("Pokemon MCP Server starting (thin proxy mode)...")
     logger.info(f"Proxying to game server at: {SERVER_URL}")
     logger.info("Server name: pokemon-emerald")
-    logger.info("Available tools (3 total, CLI agent minimal set):")
-    logger.info("  Game: get_game_state, press_buttons, navigate_to")
+    logger.info("Available tools (2 total, CLI agent minimal set):")
+    logger.info("  Game: get_game_state, press_buttons")
     logger.info("")
-    logger.info("Note: Knowledge, Wiki, Objectives, and Reflection tools removed for CLI experiments.")
+    logger.info("Note: Memory, Wiki, Objectives, and Reflection tools removed for CLI experiments.")
     logger.info("      CLI agents implement their own internal memory and planning systems.")
 
     # Check for transport mode (used when running in containerized environment)

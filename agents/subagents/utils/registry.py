@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, FrozenSet, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -17,13 +18,105 @@ class LocalSubagentSpec:
     allowed_tool_names: Sequence[str] = ()
 
 
+def _is_red() -> bool:
+    return os.environ.get("GAME_TYPE", "emerald").lower() == "red"
+
+
+def _puzzle_tool_name() -> str:
+    return "red_puzzle_agent" if _is_red() else "subagent_gym_puzzle"
+
+
 BATTLE_ALLOWED_TOOL_NAMES = (
     "press_buttons",
-    "add_knowledge",
-    "search_knowledge",
-    "get_knowledge_summary",
+    "process_memory",
+    "process_skill",
+    "add_memory",
+    "search_memory",
+    "get_memory_summary",
     "get_progress_summary",
     "lookup_pokemon_info",
+)
+
+PLANNER_ALLOWED_TOOL_NAMES = (
+    "get_progress_summary",
+    "get_walkthrough",
+    "process_memory",
+    "process_skill",
+    "search_memory",
+    "get_memory_summary",
+    "add_memory",
+    "lookup_pokemon_info",
+    "subagent_summarize",
+    "subagent_verify",
+    "subagent_reflect",
+    _puzzle_tool_name(),
+    "replan_objectives",
+)
+
+# Tools that all subagents are never allowed to call (prevents recursion).
+SUBAGENT_FORBIDDEN_TOOLS: FrozenSet[str] = frozenset({"execute_custom_subagent"})
+
+# Tool names of built-in subagents (toggled off in experimental settings).
+BUILTIN_SUBAGENT_TOOL_NAMES: FrozenSet[str] = frozenset({
+    "subagent_reflect",
+    "subagent_verify",
+    _puzzle_tool_name(),
+    "subagent_summarize",
+    "subagent_battler",
+    "subagent_plan_objectives",
+    "subagent_cleanup_run_artifacts",
+})
+
+
+_EMERALD_PUZZLE_SPEC = LocalSubagentSpec(
+    tool_name="subagent_gym_puzzle",
+    handler_type="one_step",
+    interaction_name="Gym_Puzzle_Analysis",
+    handler_method="_execute_subagent_gym_puzzle",
+    description=(
+        "Get expert guidance on solving gym puzzles. Use this when you're "
+        "in a gym and need help understanding the puzzle mechanics or "
+        "finding the solution."
+    ),
+    parameters={
+        "type_": "OBJECT",
+        "properties": {
+            "gym_name": {
+                "type_": "STRING",
+                "description": (
+                    "Gym / map identifier from the current game state, e.g. "
+                    "'LAVARIDGE_TOWN_GYM_1F' or 'MOSSDEEP_CITY_GYM'."
+                ),
+            }
+        },
+        "required": [],
+    },
+)
+
+_RED_PUZZLE_SPEC = LocalSubagentSpec(
+    tool_name="red_puzzle_agent",
+    handler_type="one_step",
+    interaction_name="Red_Puzzle_Analysis",
+    handler_method="_execute_subagent_red_puzzle",
+    description=(
+        "Get expert guidance on solving puzzles in Pokemon Red. Use this when "
+        "you're in a location with a puzzle (spinner mazes, warp mazes, etc.) "
+        "and need help understanding the mechanics or finding the solution."
+    ),
+    parameters={
+        "type_": "OBJECT",
+        "properties": {
+            "location_name": {
+                "type_": "STRING",
+                "description": (
+                    "Name of the location you're currently in (e.g., "
+                    "'RocketHideoutB2f', 'RocketHideoutB3f'). Use the exact "
+                    "location name shown in your game state."
+                ),
+            }
+        },
+        "required": [],
+    },
 )
 
 
@@ -102,30 +195,7 @@ LOCAL_SUBAGENT_SPECS = (
             "required": ["reasoning"],
         },
     ),
-    LocalSubagentSpec(
-        tool_name="subagent_gym_puzzle",
-        handler_type="one_step",
-        interaction_name="Gym_Puzzle_Analysis",
-        handler_method="_execute_subagent_gym_puzzle",
-        description=(
-            "Get expert guidance on solving gym puzzles. Use this when you're "
-            "in a gym and need help understanding the puzzle mechanics or "
-            "finding the solution."
-        ),
-        parameters={
-            "type_": "OBJECT",
-            "properties": {
-                "gym_name": {
-                    "type_": "STRING",
-                    "description": (
-                        "Gym / map identifier from the current game state, e.g. "
-                        "'LAVARIDGE_TOWN_GYM_1F' or 'MOSSDEEP_CITY_GYM'."
-                    ),
-                }
-            },
-            "required": [],
-        },
-    ),
+    _RED_PUZZLE_SPEC if _is_red() else _EMERALD_PUZZLE_SPEC,
     LocalSubagentSpec(
         tool_name="subagent_summarize",
         handler_type="one_step",
@@ -189,6 +259,199 @@ LOCAL_SUBAGENT_SPECS = (
         },
         allowed_tool_names=BATTLE_ALLOWED_TOOL_NAMES,
     ),
+    LocalSubagentSpec(
+        tool_name="subagent_plan_objectives",
+        handler_type="looping",
+        interaction_name="Subagent_Plan_Objectives",
+        handler_method="_execute_subagent_plan_objectives",
+        description=(
+            "Delegate objective planning/replanning to a specialized subagent. "
+            "This agent reviews the full objective sequence, uses research tools "
+            "and other subagents, then modifies objectives via replan_objectives. "
+            "Call this when you need new objectives, when you are stuck and believe "
+            "replanning is needed, or when the current objective sequence is exhausted."
+        ),
+        parameters={
+            "type_": "OBJECT",
+            "properties": {
+                "reason": {
+                    "type_": "STRING",
+                    "description": (
+                        "Why planning is needed. Include context about what is stuck, "
+                        "what just changed, or why new objectives are needed."
+                    ),
+                },
+                "last_n_steps": {
+                    "type_": "INTEGER",
+                    "description": (
+                        "Optional. Number of recent trajectory steps for the initial "
+                        "summary. Defaults to 25 and is capped at 50."
+                    ),
+                },
+            },
+            "required": ["reason"],
+        },
+        allowed_tool_names=PLANNER_ALLOWED_TOOL_NAMES,
+    ),
+    # ----- M3: Generalized subagent primitives -----
+    LocalSubagentSpec(
+        tool_name="execute_custom_subagent",
+        handler_type="looping",
+        interaction_name="Execute_Custom_Subagent",
+        handler_method="_execute_custom_subagent",
+        description=(
+            "Launch an autonomous subagent that runs multiple actions on its own, "
+            "receiving fresh game state each turn. The subagent runs until it "
+            "signals return_to_orchestrator or hits max_steps. You do NOT need to "
+            "call it multiple times — it loops internally. Use subagent_id for "
+            "registry entries or config for ad-hoc. Cannot nest subagents."
+        ),
+        parameters={
+            "type_": "OBJECT",
+            "properties": {
+                "subagent_id": {
+                    "type_": "STRING",
+                    "description": (
+                        "ID of a subagent in the registry (e.g. 'sa_0007'). "
+                        "Mutually exclusive with 'config'."
+                    ),
+                },
+                "config": {
+                    "type_": "OBJECT",
+                    "description": (
+                        "Inline subagent config for ad-hoc execution. Fields: "
+                        "max_turns (int), available_tools (list of tool names), "
+                        "system_instructions (str), directive (str), "
+                        "return_condition (str)."
+                    ),
+                    "properties": {
+                        "max_turns": {"type_": "INTEGER"},
+                        "available_tools": {
+                            "type_": "ARRAY",
+                            "items": {"type_": "STRING"},
+                        },
+                        "system_instructions": {"type_": "STRING"},
+                        "directive": {"type_": "STRING"},
+                        "return_condition": {"type_": "STRING"},
+                    },
+                },
+                "reasoning": {
+                    "type_": "STRING",
+                    "description": "Why you are launching this subagent now.",
+                },
+                "max_steps": {
+                    "type_": "INTEGER",
+                    "description": (
+                        "Maximum number of actions the subagent can take before "
+                        "returning control. Overrides the registry's max_turns. "
+                        "The subagent runs autonomously, receiving fresh game state "
+                        "each turn, until it signals return_to_orchestrator or hits "
+                        "this limit. Default: registry value or 25."
+                    ),
+                },
+            },
+            "required": ["reasoning"],
+        },
+    ),
+    LocalSubagentSpec(
+        tool_name="process_trajectory_history",
+        handler_type="one_step",
+        interaction_name="Process_Trajectory_History",
+        handler_method="_execute_process_trajectory_history",
+        description=(
+            "Analyze a window of trajectory history with a custom directive. "
+            "Reads trajectory entries in the requested step range and passes "
+            "them with your directive to a VLM for analysis. Use this for "
+            "custom reflection, pattern detection, or behaviour review."
+        ),
+        parameters={
+            "type_": "OBJECT",
+            "properties": {
+                "window_range": {
+                    "type_": "ARRAY",
+                    "items": {"type_": "INTEGER"},
+                    "description": (
+                        "Two-element array [start_step, end_step] defining "
+                        "the range of trajectory steps to analyze. The range "
+                        "is clipped to available data."
+                    ),
+                },
+                "directive": {
+                    "type_": "STRING",
+                    "description": (
+                        "Your analysis directive — what should the VLM look "
+                        "for or reason about in this trajectory window?"
+                    ),
+                },
+            },
+            "required": ["window_range", "directive"],
+        },
+    ),
+    LocalSubagentSpec(
+        tool_name="subagent_cleanup_run_artifacts",
+        handler_type="one_step",
+        interaction_name="Subagent_Cleanup_Run_Artifacts",
+        handler_method="_execute_subagent_cleanup_run_artifacts",
+        description=(
+            "Delete local run/cache artifacts under the repo: optional file mtime "
+            "cutoff and/or top-level directory names embedding YYYYMMDD (or "
+            "run_YYYYMMDD_). Targets default roots .pokeagent_cache, backups, and "
+            "run_data. No LLM — deterministic filesystem cleanup. Defaults to "
+            "dry_run true; set dry_run false to actually delete. Requires at least "
+            "one of file_mtime_on_or_after or directory_embedded_date_on_or_after."
+        ),
+        parameters={
+            "type_": "OBJECT",
+            "properties": {
+                "reasoning": {
+                    "type_": "STRING",
+                    "description": (
+                        "Why this cleanup is appropriate (audit trail). "
+                        "Example: 'Free disk after experiment batch; matches Mar 27+ policy.'"
+                    ),
+                },
+                "dry_run": {
+                    "type_": "BOOLEAN",
+                    "description": (
+                        "If true (default), only report counts and sample paths without "
+                        "deleting. Set false to perform deletion."
+                    ),
+                },
+                "file_mtime_on_or_after": {
+                    "type_": "STRING",
+                    "description": (
+                        "Optional. Delete files under the chosen roots whose modification "
+                        "time is >= this instant (local time). Formats: YYYY-MM-DD or "
+                        "YYYY-MM-DD HH:MM:SS."
+                    ),
+                },
+                "directory_embedded_date_on_or_after": {
+                    "type_": "STRING",
+                    "description": (
+                        "Optional. Remove top-level subdirectories of each root whose "
+                        "name starts with YYYYMMDD_ or run_YYYYMMDD_ and the date is "
+                        ">= this calendar day. Use YYYYMMDD or YYYY-MM-DD."
+                    ),
+                },
+                "roots": {
+                    "type_": "ARRAY",
+                    "items": {"type_": "STRING"},
+                    "description": (
+                        "Optional relative path names under the repo root. "
+                        "Default: [\".pokeagent_cache\", \"backups\", \"run_data\"]."
+                    ),
+                },
+                "max_path_samples": {
+                    "type_": "INTEGER",
+                    "description": (
+                        "Optional. Max sample paths per category in the JSON result "
+                        "(default 80)."
+                    ),
+                },
+            },
+            "required": ["reasoning"],
+        },
+    ),
 )
 
 
@@ -203,12 +466,27 @@ def is_local_subagent_tool(tool_name: str) -> bool:
     return tool_name in LOCAL_SUBAGENT_SPEC_BY_NAME
 
 
-def build_local_subagent_tool_declarations() -> list[Dict[str, Any]]:
-    return [
-        {
-            "name": spec.tool_name,
-            "description": spec.description,
-            "parameters": spec.parameters,
-        }
-        for spec in LOCAL_SUBAGENT_SPECS
-    ]
+def build_local_subagent_tool_declarations(
+    include_builtins: bool = True,
+) -> list[Dict[str, Any]]:
+    """Build tool declarations for all registered local subagents.
+
+    When *include_builtins* is ``False``, built-in subagents (reflect,
+    verify, summarize, gym_puzzle, battler, planner) are excluded so that
+    only the generic primitives (execute_custom_subagent,
+    process_trajectory_history) are exposed.  This is used for
+    experimental settings where the ContinualHarness loop must learn subagent
+    usage from scratch.
+    """
+    declarations: list[Dict[str, Any]] = []
+    for spec in LOCAL_SUBAGENT_SPECS:
+        if not include_builtins and spec.tool_name in BUILTIN_SUBAGENT_TOOL_NAMES:
+            continue
+        declarations.append(
+            {
+                "name": spec.tool_name,
+                "description": spec.description,
+                "parameters": spec.parameters,
+            }
+        )
+    return declarations

@@ -1,3 +1,22 @@
+*.mkv
+*.out
+*.js
+*.log
+*.gba
+*.gbc
+*.pem
+*.gba
+llm_log_*
+.cursor/*
+.claude/*
+CLAUDE.md
+agents.md
+.pokeagent_cache*
+.DS_Store
+node_modules/
+pokemon_red_env/test/output_game_state/*
+*/*.bak
+# PokemonRed-GBC/bootstrap_source
 # -----------------------------------------------------------------------------
 # Project-specific
 # -----------------------------------------------------------------------------
@@ -7,8 +26,9 @@
 
 
 # Untracked internal docs/tools
-System-Design/
-scripts/
+docs/
+System-Design/personal_notes/
+System-Design/plans/
 
 # Runtime and outputs
 .pokeagent_cache/
@@ -20,6 +40,7 @@ server/agent_thinking.txt
 *.mp4
 out.txt
 test_outputs/
+paper_data/
 
 # -----------------------------------------------------------------------------
 # Python
@@ -128,3 +149,35 @@ celerybeat-schedule
 celerybeat.pid
 *.sage.py
 
+System-Design/personal_notes/*
+test_outputs/*
+
+*.mp4
+# *scripts/*
+test_gemini.py
+out.txt
+out_2.txt
+run.sh
+llm_logs/*
+
+# Agent backups
+backups/
+.pokeagent_cache/*
+run_data/*
+server/agent_thinking.txt
+
+# tests
+PokemonRed-GBC/test_states/*
+pokemon_red_env/test/output/*
+tests/output/*
+pokemon_red_env/data/img/*
+.pdm.toml
+.pdm-python
+.pdm-build/
+__pypackages__/
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+
+# research
+research-artifacts/

@@ -17,6 +17,7 @@ from typing import Optional, Dict, List, Any
 import numpy as np
 
 import json as json_module
+from agents.prompts.paths import GAME_NAME
 
 import PIL.Image as PILImage
 import io
@@ -42,6 +43,7 @@ from agents.subagents import (
     load_subagent_context,
 )
 from agents.prompts.paths import POKEAGENT_PROMPT_PATH, resolve_repo_path
+from utils.json_utils import convert_protobuf_value, convert_protobuf_args
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -57,29 +59,7 @@ class MCPToolAdapter:
 
     def _convert_protobuf_to_native(self, value):
         """Recursively convert protobuf objects to native Python types."""
-        # Check if it's a protobuf object
-        if hasattr(value, '__class__') and 'proto' in value.__class__.__module__:
-            try:
-                # Check if it's dict-like first (has .items() method) - MapComposite
-                if hasattr(value, 'items'):
-                    return {k: self._convert_protobuf_to_native(v) for k, v in value.items()}
-                # Check if it's list-like (RepeatedComposite, RepeatedScalar)
-                elif hasattr(value, '__iter__') and not isinstance(value, (str, dict)):
-                    return [self._convert_protobuf_to_native(item) for item in value]
-                else:
-                    # Fallback to string conversion
-                    return str(value)
-            except Exception as e:
-                logger.warning(f"Failed to convert protobuf object: {e}")
-                return str(value)
-        # Check if it's a list - recurse into it
-        elif isinstance(value, list):
-            return [self._convert_protobuf_to_native(item) for item in value]
-        # Check if it's a dict - recurse into it
-        elif isinstance(value, dict):
-            return {k: self._convert_protobuf_to_native(v) for k, v in value.items()}
-        else:
-            return value
+        return convert_protobuf_value(value)
 
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call an MCP tool via HTTP request to the game server."""
@@ -90,14 +70,17 @@ class MCPToolAdapter:
                 "get_game_state": "/mcp/get_game_state",
                 "press_buttons": "/mcp/press_buttons",
                 # navigate_to REMOVED - no pathfinding in this version
-                "add_knowledge": "/mcp/add_knowledge",
-                "search_knowledge": "/mcp/search_knowledge",
-                "get_knowledge_summary": "/mcp/get_knowledge_summary",
+                "add_memory": "/mcp/add_memory",
+                "search_memory": "/mcp/search_memory",
+                "get_memory_summary": "/mcp/get_memory_summary",
+                "get_memory_overview": "/mcp/get_memory_overview",
+                "process_memory": "/mcp/process_memory",
                 "lookup_pokemon_info": "/mcp/lookup_pokemon_info",
                 "list_wiki_sources": "/mcp/list_wiki_sources",
                 "get_walkthrough": "/mcp/get_walkthrough",
                 "complete_direct_objective": "/mcp/complete_direct_objective",
-                "create_direct_objectives": "/mcp/create_direct_objectives",
+                "get_full_objective_sequence": "/mcp/get_full_objective_sequence",
+                "replan_objectives": "/mcp/replan_objectives",
                 # "get_progress_summary": "/mcp/get_progress_summary",
                 # SLAM tools
                 "save_map": "/mcp/save_map",
@@ -217,7 +200,7 @@ class VisionOnlyAgent:
         filepath = resolve_repo_path(filename)
         if not filepath.exists():
             logger.warning(f"System instructions file not found: {filepath}")
-            return "You are an AI agent playing Pokemon Emerald. Use the available tools to progress through the game."
+            return f"You are an AI agent playing {GAME_NAME}. Use the available tools to progress through the game."
 
         with open(filepath, 'r') as f:
             content = f.read()
@@ -277,37 +260,57 @@ class VisionOnlyAgent:
                 }
             },
             {
-                "name": "create_direct_objectives",
-                "description": "Create the next 3 direct objectives when a sequence completes. Use this after consulting get_walkthrough() or wiki sources to plan your next steps.",
+                "name": "replan_objectives",
+                "description": "Modify objectives for one category using index-based edits. Use this to create, update, or delete objectives.",
                 "parameters": {
                     "type_": "OBJECT",
                     "properties": {
-                        "objectives": {
+                        "category": {
+                            "type_": "STRING",
+                            "enum": ["story", "battling", "dynamics"],
+                            "description": "Which category to replan."
+                        },
+                        "edits": {
                             "type_": "ARRAY",
                             "items": {
                                 "type_": "OBJECT",
                                 "properties": {
-                                    "id": {"type_": "STRING", "description": "Unique identifier"},
-                                    "description": {"type_": "STRING", "description": "Clear description of what to accomplish"},
-                                    "action_type": {
-                                        "type_": "STRING",
-                                        "enum": ["navigate", "interact", "battle", "wait"],
-                                        "description": "Type of action"
+                                    "index": {
+                                        "type_": "INTEGER",
+                                        "description": "Zero-based objective index to edit"
                                     },
-                                    "target_location": {"type_": "STRING", "description": "Target location/map name"},
-                                    "navigation_hint": {"type_": "STRING", "description": "Specific guidance on how to accomplish this"},
-                                    "completion_condition": {"type_": "STRING", "description": "How to verify completion"}
+                                    "objective": {
+                                        "type_": "OBJECT",
+                                        "description": "Objective data. Omit or set null to delete at index.",
+                                        "properties": {
+                                            "id": {"type_": "STRING"},
+                                            "description": {"type_": "STRING"},
+                                            "action_type": {
+                                                "type_": "STRING",
+                                                "enum": ["navigate", "interact", "battle", "wait", "create_new_objectives"]
+                                            },
+                                            "target_location": {"type_": "STRING"},
+                                            "navigation_hint": {"type_": "STRING"},
+                                            "completion_condition": {"type_": "STRING"},
+                                            "optional": {"type_": "BOOLEAN"}
+                                        },
+                                        "required": ["id", "description", "action_type"]
+                                    }
                                 },
-                                "required": ["id", "description", "action_type"]
+                                "required": ["index"]
                             },
-                            "description": "Array of exactly 3 objectives to create next"
+                            "description": "List of index-based edits to apply."
                         },
-                        "reasoning": {
+                        "return_to_orchestrator": {
+                            "type_": "BOOLEAN",
+                            "description": "Set true when planning is complete."
+                        },
+                        "rationale": {
                             "type_": "STRING",
-                            "description": "Explanation of why these objectives were chosen"
+                            "description": "Brief explanation of the changes."
                         }
                     },
-                    "required": ["objectives", "reasoning"]
+                    "required": ["category", "edits", "return_to_orchestrator", "rationale"]
                 }
             },
             # {
@@ -320,10 +323,10 @@ class VisionOnlyAgent:
             #     }
             # },
 
-            # Knowledge & Information Tools
+            # Long-Term Memory Tools
             {
-                "name": "add_knowledge",
-                "description": "Store information in the persistent knowledge base for later recall.",
+                "name": "add_memory",
+                "description": "Store information in persistent long-term memory for later recall.",
                 "parameters": {
                     "type_": "OBJECT",
                     "properties": {
@@ -335,8 +338,8 @@ class VisionOnlyAgent:
                 }
             },
             {
-                "name": "search_knowledge",
-                "description": "Search the knowledge base for previously stored information.",
+                "name": "search_memory",
+                "description": "Search long-term memory for previously stored information.",
                 "parameters": {
                     "type_": "OBJECT",
                     "properties": {
@@ -346,8 +349,8 @@ class VisionOnlyAgent:
                 }
             },
             {
-                "name": "get_knowledge_summary",
-                "description": "Get a summary of all knowledge stored in the database.",
+                "name": "get_memory_summary",
+                "description": "Get a summary of all entries stored in long-term memory.",
                 "parameters": {
                     "type_": "OBJECT",
                     "properties": {},
@@ -552,26 +555,7 @@ class VisionOnlyAgent:
 
     def _convert_protobuf_args(self, proto_args) -> dict:
         """Convert protobuf arguments to JSON-serializable Python types."""
-        arguments = {}
-        for key, value in proto_args.items():
-            # Convert protobuf types to native Python types
-            if hasattr(value, '__class__') and 'proto' in value.__class__.__module__:
-                # Check if it's a list-like type first (RepeatedComposite, RepeatedScalar)
-                if hasattr(value, '__iter__') and not isinstance(value, (str, dict)):
-                    # It's a list/array - convert to Python list
-                    try:
-                        arguments[key] = list(value)
-                    except:
-                        arguments[key] = value
-                else:
-                    # It's a dict-like type - convert via dict
-                    try:
-                        arguments[key] = dict(value)
-                    except:
-                        arguments[key] = value
-            else:
-                arguments[key] = value
-        return arguments
+        return convert_protobuf_args(proto_args)
 
     def _execute_function_call(self, function_call) -> str:
         """Execute a function call and return the result as JSON string."""
@@ -772,7 +756,17 @@ class VisionOnlyAgent:
                         return self.vlm.get_query(image, prompt, "VisionOnlyAgent")
 
                     # Use VLM with image
-                    timeout = 180 if 'preview' in self.model or '3-pro' in self.model else 60
+                    # Outer wall must be >= the inner SDK deadline in
+                    # vlm_backends.GeminiBackend._call_generate_content (600s for
+                    # pro-preview, 300s for other preview, 60s default). Anything
+                    # smaller silently truncates slow calls and leaks ghost worker
+                    # threads whose responses get logged but never used.
+                    if '3-pro' in self.model or 'pro-preview' in self.model:
+                        timeout = 600
+                    elif 'preview' in self.model:
+                        timeout = 300
+                    else:
+                        timeout = 60
                     logger.info(f"📡 Calling VLM API with image (timeout: {timeout}s)")
 
                     # Retry loop for timeouts
@@ -803,7 +797,17 @@ class VisionOnlyAgent:
                         return self.vlm.get_text_query(prompt, "VisionOnlyAgent")
 
                     # Use VLM with text only
-                    timeout = 180 if 'preview' in self.model or '3-pro' in self.model else 60
+                    # Outer wall must be >= the inner SDK deadline in
+                    # vlm_backends.GeminiBackend._call_generate_content (600s for
+                    # pro-preview, 300s for other preview, 60s default). Anything
+                    # smaller silently truncates slow calls and leaks ghost worker
+                    # threads whose responses get logged but never used.
+                    if '3-pro' in self.model or 'pro-preview' in self.model:
+                        timeout = 600
+                    elif 'preview' in self.model:
+                        timeout = 300
+                    else:
+                        timeout = 60
                     logger.info(f"📡 Calling VLM API with text only (timeout: {timeout}s)")
 
                     # Retry loop for timeouts
@@ -1200,7 +1204,7 @@ class VisionOnlyAgent:
         logger.info(f"   saved_map_info: {len(saved_map_info):,} chars")
 
         # Build prompt WITHOUT navigation/pathfinding instructions
-        prompt = f"""You are an expert Pokemon player and battle strategist playing Pokémon Emerald on a Game Boy Advance emulator."""
+        prompt = f"""You are an expert Pokemon player and battle strategist playing {GAME_NAME} on an emulator."""
 
         # Add MANDATORY SLAM check at the very top if enabled
         if self.allow_slam:
@@ -1275,7 +1279,7 @@ AVAILABLE TOOLS:
   * Each button in the sequence will be sent as a separate action to the game
 
 🎯 **OBJECTIVE MANAGEMENT**:
-- create_direct_objectives(objectives, reasoning) - Create next 3 objectives when sequences complete
+- replan_objectives(category, edits, return_to_orchestrator, rationale) - Create/update/delete objectives via index-based edits
 - reflect(situation) - Use when stuck or uncertain or when repeating yourself. Analyzes recent actions and provides strategic guidance
 
 ** MOVEMENT **:

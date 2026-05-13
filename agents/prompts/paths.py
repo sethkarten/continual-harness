@@ -1,14 +1,75 @@
 """Canonical prompt paths used across the agents package."""
 
 from pathlib import Path
+import os
 
 
 PROMPTS_ROOT = "agents/prompts"
+game_type = os.environ.get("GAME_TYPE", "emerald").lower()  # game type: red or emerald (for now)
+
+# ---------------------------------------------------------------------------
+# Template rendering: prompts that differ only in game name use {game_name}
+# ---------------------------------------------------------------------------
+GAME_NAMES = {
+    "emerald": "Pokemon Emerald",
+    "red": "Pokemon Red",
+}
+GAME_NAME = GAME_NAMES.get(game_type, "Pokemon Emerald")
+
+
+def render_prompt(content: str) -> str:
+    """Substitute {game_name} in prompt content based on GAME_TYPE env var.
+
+    Uses plain str.replace() instead of str.format_map() so that literal
+    curly braces in prompt files (JSON examples, code blocks) don't cause
+    ValueError.
+    """
+    game_name = GAME_NAMES.get(game_type, "Pokemon Emerald")
+    return content.replace("{game_name}", game_name)
+
+
+# ---------------------------------------------------------------------------
+# Separate files: genuinely different content per game
+# ---------------------------------------------------------------------------
+_optimization_enabled_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/system_prompt_red.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/system_prompt.md",
+}
+_default_system_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/POKEAGENT_RED.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/POKEAGENT.md",
+}
+_simple_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/SIMPLE_RED.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/SIMPLE.md",
+}
+
+_simplest_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/SIMPLEST_RED.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/SIMPLEST.md",
+}
+
+POKEAGENT_PROMPT_PATH = _default_system_prompts[game_type]
+POKEAGENT_SYSTEM_PROMPT_PATH = _optimization_enabled_prompts[game_type]
+SIMPLE_PROMPT_PATH = _simple_prompts[game_type]
+SIMPLEST_PROMPT_PATH = _simplest_prompts[game_type]
+
+# ---------------------------------------------------------------------------
+# Templated files: single file with {game_name}, rendered at load time
+# ---------------------------------------------------------------------------
 CLI_AGENT_DIRECTIVE_PATH = f"{PROMPTS_ROOT}/cli-agent-directives/pokemon_directive.md"
-POKEAGENT_PROMPT_PATH = f"{PROMPTS_ROOT}/pokeagent-directives/POKEAGENT.md"
-POKEAGENT_SYSTEM_PROMPT_PATH = f"{PROMPTS_ROOT}/pokeagent-directives/system_prompt.md"
-POKEAGENT_BASE_PROMPT_PATH = f"{PROMPTS_ROOT}/pokeagent-directives/prompt-optimization/base_prompt.md"
-SLAM_INSTRUCTIONS_PATH = f"{PROMPTS_ROOT}/pokeagent-directives/SLAM_INSTRUCTIONS.md"
+
+# ContinualHarness directory (renamed from prompt-optimization/)
+_continual_harness_base_orchestrator_policies = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/BASE_ORCHESTRATOR_POLICY.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/BASE_ORCHESTRATOR_POLICY.md",
+}
+_continual_harness_system_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/SYSTEM_PROMPT_RED.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/SYSTEM_PROMPT.md",
+}
+CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH = _continual_harness_base_orchestrator_policies[game_type]
+CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH = _continual_harness_system_prompts[game_type]
 
 
 def resolve_repo_path(relative_path: str) -> Path:

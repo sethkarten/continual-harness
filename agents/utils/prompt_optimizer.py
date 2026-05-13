@@ -11,15 +11,26 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from agents.prompts.paths import POKEAGENT_BASE_PROMPT_PATH, POKEAGENT_SYSTEM_PROMPT_PATH, resolve_repo_path
+from agents.prompts.paths import (
+    GAME_NAME,
+    CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
+    POKEAGENT_SYSTEM_PROMPT_PATH,
+    render_prompt,
+    resolve_repo_path,
+)
+from agents.subagents.utils.trajectory_window import (
+    read_last_jsonl_lines,
+    resolve_trajectory_path,
+)
 
 logger = logging.getLogger(__name__)
+MIN_PROMPT_OPTIMIZATION_WARMUP_STEPS = 50
 
 
 class PromptOptimizer:
     """Optimizes agent base prompt based on trajectory analysis."""
     
-    def __init__(self, vlm, run_data_manager, base_prompt_path: str = POKEAGENT_BASE_PROMPT_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH):
+    def __init__(self, vlm, run_data_manager, base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None):
         """
         Initialize the prompt optimizer.
         
@@ -28,6 +39,10 @@ class PromptOptimizer:
             run_data_manager: RunDataManager for accessing trajectories
             base_prompt_path: Path to base prompt file
             system_prompt_path: Path to system prompt file (contains tool definitions)
+            initial_prompt_override: If provided, use this string as the initial
+                base prompt instead of reading from *base_prompt_path*.  Used by
+                the bootstrap system to seed evolution from a previous run's
+                evolved prompt.
         """
         # Load system prompt so optimizer knows what tools the agent has access to
         # We'll include this in the optimization prompt (not as system instruction)
@@ -35,7 +50,7 @@ class PromptOptimizer:
         self.system_prompt_content = None
         if system_prompt_file.exists():
             with open(system_prompt_file, 'r') as f:
-                self.system_prompt_content = f.read()
+                self.system_prompt_content = render_prompt(f.read())
             logger.info(f"📋 Loaded system prompt for optimizer: {system_prompt_path} ({len(self.system_prompt_content)} chars)")
         else:
             logger.warning(f"System prompt not found at {system_prompt_path}, optimizer will not know available tools")
@@ -53,10 +68,13 @@ class PromptOptimizer:
         _base = Path(base_prompt_path)
         self.base_prompt_path = _base if _base.is_absolute() else resolve_repo_path(base_prompt_path)
 
-        # Load initial base prompt
-        if self.base_prompt_path.exists():
+        # Load initial base prompt — override takes precedence over file
+        if initial_prompt_override:
+            self.current_base_prompt = initial_prompt_override
+            logger.info("PromptOptimizer: using bootstrapped prompt override (%d chars)", len(initial_prompt_override))
+        elif self.base_prompt_path.exists():
             with open(self.base_prompt_path, 'r') as f:
-                self.current_base_prompt = f.read()
+                self.current_base_prompt = render_prompt(f.read())
         else:
             logger.warning(f"Base prompt not found at {base_prompt_path}, using default")
             self.current_base_prompt = self._get_default_prompt()
@@ -77,23 +95,22 @@ class PromptOptimizer:
 
 ## Core Principles
 - Think step-by-step
-- Store important knowledge
+- Store important information in memory
 - Navigate efficiently
 - Complete objectives when done
 """
     
-    def should_optimize(self, current_step: int, optimization_frequency: int = 10) -> bool:
+    def should_optimize(self, current_step: int, optimization_window_length: int = 50) -> bool:
+        """Check if optimization should run at this step.
+
+        Uses the same adaptive schedule as HarnessEvolver: every 25 steps
+        during the first 200 steps, then every 100 steps afterwards.
+        ``optimization_window_length`` is accepted for API compat but ignored.
         """
-        Check if optimization should run at this step.
-        
-        Args:
-            current_step: Current agent step number
-            optimization_frequency: How often to run optimization
-        
-        Returns:
-            True if optimization should run
-        """
-        return current_step > 0 and current_step % optimization_frequency == 0
+        if current_step < MIN_PROMPT_OPTIMIZATION_WARMUP_STEPS or current_step <= 0:
+            return False
+        effective_freq = 25 if current_step <= 200 else 100
+        return current_step % effective_freq == 0
     
     def get_recent_trajectories(self, num_steps: int = 10) -> List[Dict[str, Any]]:
         """
@@ -105,20 +122,18 @@ class PromptOptimizer:
         Returns:
             List of trajectory dictionaries
         """
-        trajectory_file = self.run_manager.run_dir / "prompt_evolution" / "trajectories" / "trajectories.jsonl"
-        
-        if not trajectory_file.exists():
+        trajectory_file = resolve_trajectory_path(self.run_manager)
+        if not trajectory_file or not trajectory_file.exists():
             logger.warning("No trajectory file found")
             return []
-        
+
         trajectories = []
-        with open(trajectory_file, 'r') as f:
-            for line in f:
-                if line.strip():
-                    trajectories.append(json.loads(line))
-        
-        # Return last N trajectories
-        return trajectories[-num_steps:] if len(trajectories) >= num_steps else trajectories
+        for line in read_last_jsonl_lines(trajectory_file, num_steps):
+            try:
+                trajectories.append(json.loads(line))
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed trajectory line from %s", trajectory_file)
+        return trajectories
     
     def optimize_prompt(self, current_step: int, num_trajectory_steps: int = 10) -> str:
         """
@@ -163,7 +178,7 @@ The main agent receives this as its **system** message every step. You must **no
 """
         
         # Create optimization prompt
-        optimization_prompt = f"""You are a prompt optimization expert. Your task is to improve an AI agent's strategic guidance prompt based on its recent performance in playing Pokemon Emerald.
+        optimization_prompt = f"""You are a prompt optimization expert. Your task is to improve an AI agent's strategic guidance prompt based on its recent performance in playing {GAME_NAME}.
 {system_prompt_section}## Current Base Prompt (Strategic Guidance):
 This is the optimizable strategic guidance that gets combined with runtime context (action history, objectives, game state) and sent to the main agent. You can modify this to improve the agent's decision-making.
 
@@ -183,10 +198,10 @@ Analyze the agent's recent performance and create an IMPROVED base prompt that:
 
 **Look for these patterns:**
 - Repeated failures (stuck in loops, wrong tool usage, blocked navigation)
-- Successful strategies (good knowledge base usage, efficient pathfinding, smart battle decisions)
+- Successful strategies (good memory usage, efficient pathfinding, smart battle decisions)
 - Progress toward objectives (completing tasks, leveling up, advancing story)
 - Tool usage patterns (are they using the tools at their disposal effectively?)
-- Knowledge management (are they storing and retrieving knowledge appropriately?)
+- Memory management (are they storing and retrieving information in memory appropriately?)
 - Not adapting when stuck → emphasize flexibility and trying new approaches
 
 ## Output Format:
@@ -232,66 +247,75 @@ IMPROVED BASE PROMPT:
             return self.current_base_prompt
     
     def _format_trajectories_for_analysis(self, trajectories: List[Dict[str, Any]]) -> str:
-        """Format trajectories into readable text for LLM analysis."""
+        """Format trajectories into readable text for LLM analysis.
+
+        Uses the *next* step's ``pre_state`` as the effective post-state for
+        movement heuristics, since ``post_state`` is no longer recorded.
+        """
         formatted = []
-        
+
         for i, traj in enumerate(trajectories, 1):
             step_text = f"\n### Step {traj.get('step', i)}\n"
             step_text += f"**Reasoning:** {traj.get('reasoning', 'N/A')}\n"
-            
+
             # Format action (can be dict or string)
             action = traj.get('action', 'N/A')
             if isinstance(action, dict):
-                # Extract tool call names from action dict
                 tool_calls = action.get('tool_calls', [])
                 if tool_calls:
                     action_names = [tc.get('name', 'unknown') for tc in tool_calls]
                     action_str = ', '.join(action_names)
                     step_text += f"**Action:** {action_str}\n"
+                    for tc in tool_calls:
+                        tc_name = tc.get('name', '')
+                        tc_args = tc.get('args', {})
+                        tc_result = tc.get('result', '')
+                        if tc_name in ('run_skill', 'execute_custom_subagent', 'process_subagent', 'process_skill', 'process_memory'):
+                            args_str = json.dumps(tc_args, default=str)[:300]
+                            step_text += f"  - `{tc_name}` args: {args_str}\n"
+                            if tc_result:
+                                result_str = str(tc_result)[:300]
+                                step_text += f"  - result: {result_str}\n"
                 else:
                     step_text += f"**Action:** {action.get('type', 'N/A')}\n"
             else:
                 step_text += f"**Action:** {action}\n"
-            
-            # Include relevant state info
+
             pre_state = traj.get('pre_state', {})
-            post_state = traj.get('post_state', {})
-            
+
             if pre_state:
-                step_text += f"**Pre-State:** Location: {pre_state.get('location', 'Unknown')}, "
+                step_text += f"**State:** Location: {pre_state.get('location', 'Unknown')}, "
                 step_text += f"Coords: {pre_state.get('player_coords', 'Unknown')}, "
                 step_text += f"Context: {pre_state.get('context', 'Unknown')}\n"
-            
-            if post_state:
-                step_text += f"**Post-State:** Location: {post_state.get('location', 'Unknown')}, "
-                step_text += f"Coords: {post_state.get('player_coords', 'Unknown')}\n"
-            
-            # Check for issues (movement attempted but coordinates unchanged)
-            if pre_state.get('player_coords') == post_state.get('player_coords'):
-                # Extract action names for checking
+
+            # Infer post-step coords from the next trajectory's pre_state
+            next_coords = None
+            if i < len(trajectories):
+                next_coords = trajectories[i].get('pre_state', {}).get('player_coords')
+
+            pre_coords = pre_state.get('player_coords')
+            if pre_coords is not None and next_coords is not None and pre_coords == next_coords:
                 action_names = []
                 if isinstance(action, dict):
-                    tool_calls = action.get('tool_calls', [])
-                    action_names = [tc.get('name', '').lower() for tc in tool_calls]
+                    action_names = [tc.get('name', '').lower() for tc in action.get('tool_calls', [])]
                 elif isinstance(action, str):
                     action_names = [action.lower()]
-                
-                # Check if movement was attempted
+
                 movement_attempted = (
                     'navigate_to' in action_names or
-                    any(btn in action_names for btn in ['press_buttons']) or
-                    (isinstance(action, str) and any(btn in action.upper() for btn in ['UP', 'DOWN', 'LEFT', 'RIGHT']))
+                    'press_buttons' in action_names or
+                    (isinstance(action, str) and any(d in action.upper() for d in ['UP', 'DOWN', 'LEFT', 'RIGHT']))
                 )
-                
+
                 if movement_attempted:
                     step_text += "⚠️ **Issue:** Movement attempted but coordinates unchanged (possibly blocked)\n"
-            
-            # Check for repeated locations
-            if i > 1 and pre_state.get('player_coords') == trajectories[i-2].get('pre_state', {}).get('player_coords'):
+
+            # Check for repeated locations (uses only pre_state)
+            if i > 1 and pre_coords == trajectories[i-2].get('pre_state', {}).get('player_coords'):
                 step_text += "⚠️ **Pattern:** Same location as 2 steps ago (possible loop)\n"
-            
+
             formatted.append(step_text)
-        
+
         return "\n".join(formatted)
     
     def _save_optimized_prompt(self, prompt: str, end_step: int, start_step: int):
@@ -327,7 +351,7 @@ IMPROVED BASE PROMPT:
         return self.current_base_prompt
 
 
-def create_prompt_optimizer(vlm, run_data_manager, base_prompt_path: str = POKEAGENT_BASE_PROMPT_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH) -> PromptOptimizer:
+def create_prompt_optimizer(vlm, run_data_manager, base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None) -> PromptOptimizer:
     """Factory function to create a PromptOptimizer instance."""
-    return PromptOptimizer(vlm, run_data_manager, base_prompt_path, system_prompt_path)
+    return PromptOptimizer(vlm, run_data_manager, base_prompt_path, system_prompt_path, initial_prompt_override=initial_prompt_override)
 

@@ -1,4 +1,5 @@
-"""Trajectory-window helpers for local subagents."""
+"""Trajectory-window helpers for subagents. The subagent/optimization system
+is deeply tied to the global trajectory history stored in trajectory_history.jsonl"""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-MAX_TRAJECTORY_WINDOW = 50
+MAX_TRAJECTORY_WINDOW = 100
 DEFAULT_TRAJECTORY_WINDOW = 10
 
 
@@ -25,24 +26,37 @@ def clamp_trajectory_window(last_n_steps: Optional[int]) -> int:
     return max(1, min(requested, MAX_TRAJECTORY_WINDOW))
 
 
-def _trajectory_file_for_run(run_data_manager: Any) -> Optional[Path]:
-    """Resolve the trajectories.jsonl path from the run manager."""
-    if run_data_manager is None:
-        return None
+def resolve_trajectory_path(run_data_manager: Any = None) -> Optional[Path]:
+    """Resolve trajectory_history.jsonl using cache/run_data precedence."""
+    try:
+        from utils.data_persistence.run_data_manager import get_cache_path
+        cache_file = get_cache_path("trajectory_history.jsonl")
+        if cache_file.exists():
+            return cache_file
+    except Exception:
+        pass
 
-    run_dir = None
-    if hasattr(run_data_manager, "get_run_directory"):
-        run_dir = run_data_manager.get_run_directory()
-    elif hasattr(run_data_manager, "run_dir"):
-        run_dir = run_data_manager.run_dir
+    # Fallback to synced run_data copy when cache is unavailable.
+    if run_data_manager is not None:
+        run_dir = None
+        if hasattr(run_data_manager, "get_run_directory"):
+            run_dir = run_data_manager.get_run_directory()
+        elif hasattr(run_data_manager, "run_dir"):
+            run_dir = run_data_manager.run_dir
+        if run_dir:
+            synced = Path(run_dir) / "trajectory_history.jsonl"
+            if synced.exists():
+                return synced
 
-    if not run_dir:
-        return None
-
-    return Path(run_dir) / "prompt_evolution" / "trajectories" / "trajectories.jsonl"
+    return None
 
 
-def _read_last_jsonl_lines(path: Path, max_lines: int) -> List[str]:
+def _trajectory_file_for_run(run_data_manager: Any = None) -> Optional[Path]:
+    """Backward-compatible alias for legacy callsites/tests."""
+    return resolve_trajectory_path(run_data_manager)
+
+
+def read_last_jsonl_lines(path: Path, max_lines: int) -> List[str]:
     """Read the last non-empty lines from a JSONL file without scanning it twice."""
     if max_lines <= 0 or not path.exists():
         return []
@@ -88,21 +102,75 @@ def _read_last_jsonl_lines(path: Path, max_lines: int) -> List[str]:
     return lines
 
 
+def _read_last_jsonl_lines(path: Path, max_lines: int) -> List[str]:
+    """Backward-compatible alias for older callsites/tests."""
+    return read_last_jsonl_lines(path, max_lines)
+
+
 def load_recent_trajectories(run_data_manager: Any, last_n_steps: Optional[int] = None) -> List[Dict[str, Any]]:
     """Load the most recent trajectory entries, preserving chronological order."""
     window_size = clamp_trajectory_window(last_n_steps)
-    trajectory_file = _trajectory_file_for_run(run_data_manager)
+    trajectory_file = resolve_trajectory_path(run_data_manager)
     if not trajectory_file or not trajectory_file.exists():
         return []
 
     trajectories: List[Dict[str, Any]] = []
-    for line in _read_last_jsonl_lines(trajectory_file, window_size):
+    for line in read_last_jsonl_lines(trajectory_file, window_size):
         try:
             trajectories.append(json.loads(line))
         except json.JSONDecodeError:
             logger.warning("Skipping malformed trajectory line from %s", trajectory_file)
 
     return trajectories
+
+
+def load_trajectory_range(
+    run_data_manager: Any,
+    start: int,
+    end: int,
+) -> tuple[List[Dict[str, Any]], int, int]:
+    """Load trajectory entries whose ``step`` falls in [start, end].
+
+    Returns ``(entries, actual_min_step, actual_max_step)`` where the
+    actual values reflect the available data (the range is clipped).
+    Implementation note: this reads only a bounded tail window
+    (MAX_TRAJECTORY_WINDOW * 10 lines), not the full trajectory file.
+    """
+    trajectory_file = resolve_trajectory_path(run_data_manager)
+    if not trajectory_file or not trajectory_file.exists():
+        return [], 0, 0
+
+    all_lines = read_last_jsonl_lines(trajectory_file, MAX_TRAJECTORY_WINDOW * 10)
+
+    entries: List[Dict[str, Any]] = []
+    min_step = float("inf")
+    max_step = float("-inf")
+
+    for line in all_lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        step = entry.get("step")
+        if step is None:
+            continue
+        step_int = int(step)
+        if step_int < min_step:
+            min_step = step_int
+        if step_int > max_step:
+            max_step = step_int
+        if start <= step_int <= end:
+            entries.append(entry)
+
+    actual_min = int(min_step) if min_step != float("inf") else 0
+    actual_max = int(max_step) if max_step != float("-inf") else 0
+    if actual_min and actual_min > start:
+        logger.warning(
+            "Trajectory range clipped to available tail window: requested_start=%d actual_min=%d",
+            start,
+            actual_min,
+        )
+    return entries, actual_min, actual_max
 
 
 def _format_coords(snapshot: Dict[str, Any]) -> str:
@@ -139,16 +207,23 @@ def format_trajectory_window(trajectories: List[Dict[str, Any]]) -> str:
         step = entry.get("step", "?")
         action = _summarize_action(entry.get("action"))
         pre_state = entry.get("pre_state") or {}
-        post_state = entry.get("post_state") or {}
         reasoning = (entry.get("reasoning") or "").strip()
         outcome = _summarize_outcome(entry.get("outcome"))
 
-        lines.append(
-            f"Step {step}: {action} | "
-            f"{pre_state.get('location', 'Unknown')} {_format_coords(pre_state)} -> "
-            f"{post_state.get('location', 'Unknown')} {_format_coords(post_state)} | "
-            f"Outcome: {outcome}"
-        )
+        # New schema: location/player_coords are top-level fields
+        location = entry.get("location") or pre_state.get("location", "Unknown")
+        coords_raw = entry.get("player_coords") or pre_state.get("player_coords")
+        if isinstance(coords_raw, (list, tuple)) and len(coords_raw) >= 2:
+            coords_str = f"({coords_raw[0]}, {coords_raw[1]})"
+        else:
+            coords_str = _format_coords(pre_state)
+
+        loc_info = f"{location} {coords_str}"
+
+        obj_context = entry.get("objective_context")
+        obj_str = f" | Obj: {obj_context}" if obj_context else ""
+
+        lines.append(f"Step {step}: {action} | {loc_info} | Outcome: {outcome}{obj_str}")
         if reasoning:
             lines.append(f"  Reasoning: {reasoning[:280]}")
 

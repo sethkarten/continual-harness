@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
+from agents.prompts.paths import GAME_NAME
+
 
 def resolve_verification_target(objective_state: Dict[str, Any], category: Optional[str] = None) -> Dict[str, Any]:
     """Resolve the authoritative objective that verify should judge."""
@@ -57,9 +59,10 @@ def build_verify_prompt(
     """Build the verify-subagent prompt."""
     current_state = context.get("current_state", {})
     objective = target.get("objective", {})
-    knowledge_summary = context.get("knowledge_summary") or "No knowledge recorded yet."
+    memory_summary = context.get("memory_summary") or "No memories recorded yet."
+    skill_overview = context.get("skill_overview") or "No skills learned yet."
 
-    return f"""You are the verify subagent for a Pokemon Emerald speedrun agent.
+    return f"""You are the verify subagent for a {GAME_NAME} speedrun agent.
 Your only job is to decide whether the current objective has already been completed.
 
 The current screenshot is attached when available. Use it as CURRENT visual evidence only.
@@ -82,14 +85,17 @@ Location: {current_state.get('location')}
 Coordinates: ({current_state.get('coordinates', {}).get('x')}, {current_state.get('coordinates', {}).get('y')})
 {current_state.get('state_text', '')}
 
-KNOWLEDGE SUMMARY:
-{knowledge_summary}
+LONG-TERM MEMORY OVERVIEW:
+{memory_summary}
+
+SKILL LIBRARY:
+{skill_overview}
 
 RECENT TRAJECTORY WINDOW (last {last_n_steps} steps):
 {context.get('trajectory_summary', 'No prior trajectories recorded.')}
 
 RULES:
-1. Use only evidence present in current state, screenshot, knowledge summary, and trajectory window.
+1. Use only evidence present in current state, screenshot, memory, and trajectory window.
 2. Do not mark the objective complete just because progress seems likely.
 3. If the objective is ambiguous, incomplete, or contradicted by evidence, set is_complete to false.
 4. Keep evidence bullets short and specific.

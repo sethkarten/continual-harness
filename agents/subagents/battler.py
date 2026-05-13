@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from agents.prompts.paths import GAME_NAME
 from .utils.registry import BATTLE_ALLOWED_TOOL_NAMES
 
 
@@ -45,12 +46,13 @@ def build_battler_prompt(
     location: str,
     objective_state: Dict[str, Any],
     progress: Dict[str, Any],
-    knowledge_summary: str,
+    memory_summary: str,
+    skill_overview: str = "",
     handoff_summary: str,
     battle_history: str,
     turn_index: int,
 ) -> str:
-    return f"""You are the Pokemon Emerald battle subagent.
+    return f"""You are the {GAME_NAME} battle subagent.
 You are responsible only for resolving the active battle as efficiently and safely as possible.
 
 BATTLE TURN: {turn_index}
@@ -66,8 +68,11 @@ OBJECTIVE STATE:
 PROGRESS SUMMARY:
 {progress}
 
-KNOWLEDGE SUMMARY:
-{knowledge_summary or "No knowledge recorded yet."}
+LONG-TERM MEMORY OVERVIEW:
+{memory_summary or "No memories recorded yet."}
+
+SKILL LIBRARY:
+{skill_overview or "No skills learned yet."}
 
 PRE-BATTLE CONTEXT HANDOFF:
 {handoff_summary}
@@ -79,7 +84,7 @@ DECISION PROCESS:
 1. Analyze the current battle state, menu state, and visible options.
 2. Review your battle history to avoid repeating mistakes.
 3. Choose the highest-value action for this turn.
-4. If useful, store battle-relevant knowledge before the final action.
+4. If useful, store battle-relevant information in memory before the final action.
 5. Finish with one tool call."""
 
 

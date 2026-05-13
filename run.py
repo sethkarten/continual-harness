@@ -18,8 +18,44 @@ CUSTOM_AGENT_CONFIGS = {
         "name": "PokeAgent",
         "details": [
             "Custom VLM benchmark agent with tool scaffolding",
-            "All MCP tools enabled",
+            "All MCP tools enabled (built-in subagents + generic primitives)",
             "Supports autonomous objective creation and prompt optimization",
+        ],
+        "module": "agents.PokeAgent",
+        "class": "PokeAgent",
+        "use_backend": True,
+        "supports_prompt_optimization": True,
+    },
+    "simple": {
+        "name": "PokeAgent",
+        "details": [
+            "Minimal PokeAgent scaffold (H_min baseline)",
+            "No built-in subagent tools; orchestrator owns replan_objectives directly",
+            "Empty subagent registry (agent must create its own)",
+        ],
+        "module": "agents.PokeAgent",
+        "class": "PokeAgent",
+        "use_backend": True,
+        "supports_prompt_optimization": False,
+    },
+    "simplest": {
+        "name": "PokeAgent",
+        "details": [
+            "Bare-minimum scaffold (only press_buttons + process_memory)",
+            "No direct objectives, no skills, no subagents, no code execution",
+            "Designed for ablation study of minimal tool access",
+        ],
+        "module": "agents.PokeAgent",
+        "class": "PokeAgent",
+        "use_backend": True,
+        "supports_prompt_optimization": False,
+    },
+    "continualharness": {
+        "name": "PokeAgent",
+        "details": [
+            "ContinualHarness scaffold (H_auto): starts from H_min + evolutionary optimization",
+            "No built-in subagent tools; empty registry (agent creates its own)",
+            "Reset-free prompt evolution from trajectory segments",
         ],
         "module": "agents.PokeAgent",
         "class": "PokeAgent",
@@ -55,6 +91,9 @@ CUSTOM_AGENT_CONFIGS = {
 
 SCAFFOLD_DESCRIPTIONS = {
     "pokeagent": "PokeAgent (VLM benchmark agent with tool scaffolding)",
+    "simple": "PokeAgent-Simple (H_min: no built-in subagents, direct replan, empty registry)",
+    "simplest": "PokeAgent-Simplest (bare minimum: press_buttons + process_memory only)",
+    "continualharness": "ContinualHarness (H_auto: H_min + reset-free evolutionary optimization)",
     "autonomous_cli": "PokeAgent (legacy alias)",
     "vision_only": "Vision-Only Agent (no map info, no pathfinding, button sequences)",
 }
@@ -87,8 +126,18 @@ def start_server(args, run_id=None):
 
     # Single-writer metrics: server is the only writer
     server_env["LLM_METRICS_WRITE_ENABLED"] = "true"
-    
+
+    # simple/simplest/continualharness scaffolds start with an empty subagent registry
+    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "continualharness"):
+        server_env["EXCLUDE_BUILTIN_SUBAGENTS"] = "1"
+
     # Pass through server-relevant arguments
+    if args.game:
+        server_cmd.extend(["--game", args.game])
+        server_env["GAME_TYPE"] = args.game
+        # Also set in current (client) process so agent scaffolds can detect game type
+        os.environ["GAME_TYPE"] = args.game
+
     if args.record:
         server_cmd.append("--record")
     
@@ -116,6 +165,7 @@ def start_server(args, run_id=None):
     
     if args.direct_objectives:
         server_cmd.extend(["--direct-objectives", args.direct_objectives])
+        server_env["HAS_DIRECT_OBJECTIVES"] = "1"
         if args.direct_objectives_start > 0:
             server_cmd.extend(["--direct-objectives-start", str(args.direct_objectives_start)])
         if args.direct_objectives_battling_start > 0:
@@ -173,9 +223,25 @@ def start_custom_agent(agent_config, args):
     print("=" * 60)
     print("✅ Server is running")
     print(f"🤖 Starting {agent_config['name']}...")
-    for detail in agent_config.get('details', []):
+    detail_lines = list(agent_config.get('details', []))
+    if getattr(args, "bootstrap_from", None) and agent_config.get("class") == "PokeAgent":
+        detail_lines = [
+            detail.replace(
+                "Empty subagent registry (agent must create its own)",
+                "Registry bootstrapped from prior run under `bootstrapped/` paths",
+            ).replace(
+                "No built-in subagent tools; empty registry (agent creates its own)",
+                "No built-in subagent tools; registry bootstrapped from prior run under `bootstrapped/` paths",
+            )
+            for detail in detail_lines
+        ]
+    for detail in detail_lines:
         print(f"   {detail}")
     print("")
+
+    # Ensure EXCLUDE_BUILTIN_SUBAGENTS is visible in the agent process too
+    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "continualharness"):
+        os.environ["EXCLUDE_BUILTIN_SUBAGENTS"] = "1"
 
     # Dynamic import
     module = __import__(agent_config['module'], fromlist=[agent_config['class']])
@@ -206,7 +272,15 @@ def start_custom_agent(agent_config, args):
     # Add prompt optimization if specified in config
     if agent_config.get('supports_prompt_optimization', False):
         agent_kwargs["enable_prompt_optimization"] = args.enable_prompt_optimization if hasattr(args, 'enable_prompt_optimization') else False
-        agent_kwargs["optimization_frequency"] = args.optimization_frequency if hasattr(args, 'optimization_frequency') else 10
+        window_len = getattr(args, "optimization_frequency_deprecated", None) or args.optimization_window_length
+        agent_kwargs["optimization_window_length"] = window_len
+
+    # Pass scaffold name to PokeAgent so it can select tool set and prompt
+    if agent_config.get("class") == "PokeAgent":
+        agent_kwargs["scaffold"] = args.scaffold
+        if getattr(args, "bootstrap_from", None):
+            agent_kwargs["bootstrap_from"] = args.bootstrap_from
+            agent_kwargs["bootstrap_prompt_path"] = getattr(args, "bootstrap_prompt_path", None)
 
     agent = agent_class(**agent_kwargs)
     print("✅ Agent created", flush=True)
@@ -216,12 +290,14 @@ def start_custom_agent(agent_config, args):
 
 def main():
     """Main entry point for the Pokemon Agent"""
-    parser = argparse.ArgumentParser(description="Pokemon Emerald AI Agent")
+    parser = argparse.ArgumentParser(description="Pokemon AI Agent")
     
     # Core arguments
-    parser.add_argument("--rom", type=str, default="Emerald-GBAdvance/rom.gba", 
+    parser.add_argument("--game", type=str, default="emerald", choices=["red", "emerald"],
+                       help="Which game to run: 'red' (Pokemon Red, Game Boy) or 'emerald' (Pokemon Emerald, GBA)")
+    parser.add_argument("--rom", type=str, default="Emerald-GBAdvance/rom.gba",
                        help="Path to ROM file")
-    parser.add_argument("--port", type=int, default=8000, 
+    parser.add_argument("--port", type=int, default=8000,
                        help="Port for web interface")
     
     # State loading
@@ -231,6 +307,10 @@ def main():
                        help="Load from checkpoint files")
     parser.add_argument("--backup-state", type=str,
                        help="Load from a backup zip file (extracts to cache and loads checkpoint). This is the preferred convention for loading a run that doesnt start from the beginning.")
+    parser.add_argument("--bootstrap-from", type=str, default=None,
+                       help="Directory with learned artifacts to bootstrap from "
+                            "(memory.json, skills.json, subagents.json, "
+                            "EVOLVED_ORCHESTRATOR_POLICY.md or steps_*.md)")
     
     # Agent configuration
     parser.add_argument("--backend", type=str, default="gemini", 
@@ -239,7 +319,7 @@ def main():
                        help="Model name to use")
     parser.add_argument("--scaffold", type=str, default="pokeagent",
                        choices=SUPPORTED_SCAFFOLDS,
-                       help="Agent scaffold: pokeagent (default)/autonomous_cli, or vision_only")
+                       help="Agent scaffold: pokeagent (default), simple, simplest, continualharness, autonomous_cli, or vision_only")
     
     # Operation modes
     parser.add_argument("--headless", action="store_true", 
@@ -260,23 +340,39 @@ def main():
                        help="Start index for story objectives in legacy mode, or story objectives in categorized mode")
     parser.add_argument("--direct-objectives-battling-start", type=int, default=0,
                        help="Start index for battling objectives (only used in categorized mode)")
+    parser.add_argument("--clear-memory", action="store_true",
+                       help="Clear the memory.json file before starting the run")
     parser.add_argument("--clear-knowledge-base", action="store_true",
-                       help="Clear the knowledge_base.json file before starting the run")
+                       dest="clear_memory",
+                       help="Deprecated alias for --clear-memory")
     parser.add_argument("--run-name", type=str, default=None,
                        help="Optional name to append to run directory (e.g., 'test_run' -> 'run_20251129_191503_test_run')")
     parser.add_argument("--enable-prompt-optimization", action="store_true",
                        help="Enable reflective prompt optimization based on trajectory analysis")
-    parser.add_argument("--optimization-frequency", type=int, default=10,
-                       help="How often to run prompt optimization (default: every 10 steps)")
+    parser.add_argument("--optimization-window-length", type=int, default=50,
+                       dest="optimization_window_length",
+                       help="Number of recent trajectory steps to use for evolution analysis (default: 50)")
+    parser.add_argument("--optimization-frequency", type=int, default=None,
+                       dest="optimization_frequency_deprecated",
+                       help="Deprecated: use --optimization-window-length instead")
     parser.add_argument("--allow-walkthrough", action="store_true",
                        help="Enable get_walkthrough tool for vision_only agent")
     parser.add_argument("--allow-slam", action="store_true",
                        help="Enable SLAM (map building) for vision_only agent")
-
     args = parser.parse_args()
-    
+
+    # Set GAME_TYPE early — MUST happen before any import from the agents
+    # package because agents/__init__.py imports PokeAgent which imports
+    # agents.prompts.paths, and paths.py reads GAME_TYPE at module level.
+    os.environ["GAME_TYPE"] = args.game
+
+    # Fix ROM default for Red (parser default is Emerald ROM)
+    if args.rom == "Emerald-GBAdvance/rom.gba" and args.game == "red":
+        args.rom = "PokemonRed-GBC/pokered.gbc"
+
     print("=" * 60)
-    print("🎮 Pokemon Emerald AI Agent")
+    game_label = "Pokemon Red" if args.game == "red" else "Pokemon Emerald"
+    print(f"🎮 {game_label} AI Agent")
     print("=" * 60)
     
     # Get first objective info for consistent run naming
@@ -350,23 +446,41 @@ def main():
             else:
                 print(f"❌ Failed to restore backup, continuing with fresh state")
         
-        # Clear knowledge base if requested
-        if args.clear_knowledge_base:
+        if args.clear_memory:
             from utils.data_persistence.run_data_manager import get_cache_path
-            knowledge_base_file = get_cache_path("knowledge_base.json")
-            if knowledge_base_file.exists():
-                # Clear the file by writing empty JSON structure
-                import json
-                empty_data = {
-                    "next_id": 1,
-                    "entries": {}
-                }
-                with open(knowledge_base_file, 'w') as f:
-                    json.dump(empty_data, f, indent=2)
-                print(f"🧹 Cleared knowledge base: {knowledge_base_file}")
-            else:
-                print(f"ℹ️  Knowledge base file does not exist yet: {knowledge_base_file}")
+            import json
+            memory_file = get_cache_path("memory.json")
+            legacy_file = get_cache_path("knowledge_base.json")
+            cleared = False
+            for f in (memory_file, legacy_file):
+                if f.exists():
+                    empty_data = {"next_id": 1, "entries": {}}
+                    with open(f, 'w') as fh:
+                        json.dump(empty_data, fh, indent=2)
+                    print(f"🧹 Cleared memory: {f}")
+                    cleared = True
+            if not cleared:
+                print(f"ℹ️  Memory file does not exist yet: {memory_file}")
         
+        # Bootstrap stores from a previous run if requested
+        if args.bootstrap_from:
+            from utils.stores.bootstrap import bootstrap_stores
+            from utils.data_persistence.run_data_manager import get_cache_directory
+
+            print(f"\n🧬 Bootstrapping stores from: {args.bootstrap_from}")
+            bs_result = bootstrap_stores(
+                source_dir=args.bootstrap_from,
+                target_cache_dir=str(get_cache_directory()),
+                prompt_backend=args.backend,
+                prompt_model_name=args.model_name,
+            )
+            args.bootstrap_prompt_path = bs_result.get("prompt_path")
+            os.environ["BOOTSTRAP_ACTIVE"] = "1"
+            print(f"   Bootstrapped: {bs_result['skills']} skills, "
+                  f"{bs_result['memory']} memories, {bs_result['subagents']} subagents")
+            if args.bootstrap_prompt_path:
+                print(f"   Evolved prompt: {args.bootstrap_prompt_path}")
+
         # Auto-start server if requested
         if args.agent_auto or args.manual or args.scaffold in SERVER_MANAGED_SCAFFOLDS:
             print("\n📡 Starting server process...")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from agents.prompts.paths import GAME_NAME
 from agents.subagents.utils.trajectory_window import MAX_TRAJECTORY_WINDOW
 
 DEFAULT_SUMMARY_WINDOW = 25
@@ -12,10 +13,11 @@ DEFAULT_SUMMARY_WINDOW = 25
 def build_summarize_prompt(*, context: Dict[str, Any], last_n_steps: int, reasoning: str) -> str:
     current_state = context.get("current_state", {})
     objective_state = context.get("objective_state", {})
-    knowledge_summary = context.get("knowledge_summary") or "No knowledge recorded yet."
+    memory_summary = context.get("memory_summary") or "No memories recorded yet."
+    skill_overview = context.get("skill_overview") or "No skills learned yet."
     progress = context.get("progress", {})
 
-    return f"""You are the summarize subagent for a Pokemon Emerald speedrun agent.
+    return f"""You are the summarize subagent for a {GAME_NAME} speedrun agent.
 Your job is to produce a detailed, unbiased handoff summary of the latest trajectory window.
 
 FOCUS:
@@ -32,8 +34,11 @@ OBJECTIVE STATE:
 PROGRESS SUMMARY:
 {progress}
 
-KNOWLEDGE SUMMARY:
-{knowledge_summary}
+LONG-TERM MEMORY OVERVIEW:
+{memory_summary}
+
+SKILL LIBRARY:
+{skill_overview}
 
 RECENT TRAJECTORY WINDOW (last {last_n_steps} steps):
 {context.get('trajectory_summary', 'No prior trajectories recorded.')}
