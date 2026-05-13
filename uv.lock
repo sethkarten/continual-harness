@@ -258,6 +258,124 @@ wheels = [
 ]
 
 [[package]]
+name = "continual-harness"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "accelerate" },
+    { name = "anthropic" },
+    { name = "beautifulsoup4" },
+    { name = "bitsandbytes" },
+    { name = "cffi" },
+    { name = "colorama" },
+    { name = "eventlet" },
+    { name = "fastapi" },
+    { name = "flask" },
+    { name = "flask-socketio" },
+    { name = "gevent" },
+    { name = "gevent-websocket" },
+    { name = "google" },
+    { name = "google-generativeai" },
+    { name = "grpcio" },
+    { name = "mcp" },
+    { name = "mgba" },
+    { name = "more-itertools" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "opencv-python" },
+    { name = "pillow" },
+    { name = "pip" },
+    { name = "protobuf" },
+    { name = "pyboy" },
+    { name = "pydantic" },
+    { name = "pygame" },
+    { name = "pytesseract" },
+    { name = "python-dotenv" },
+    { name = "python-engineio" },
+    { name = "python-socketio" },
+    { name = "pytz" },
+    { name = "pyyaml" },
+    { name = "requests" },
+    { name = "six" },
+    { name = "torchvision" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "xxhash" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "matplotlib" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=0.25.0" },
+    { name = "anthropic", specifier = ">=0.39.0" },
+    { name = "beautifulsoup4", specifier = ">=4.14.2" },
+    { name = "bitsandbytes", specifier = ">=0.41.0" },
+    { name = "cffi", specifier = ">=1.6" },
+    { name = "colorama" },
+    { name = "eventlet", specifier = "==0.35.2" },
+    { name = "fastapi", specifier = ">=0.104.0" },
+    { name = "flask", specifier = "==3.0.2" },
+    { name = "flask-socketio", specifier = "==5.3.6" },
+    { name = "gevent", specifier = "==23.9.1" },
+    { name = "gevent-websocket", specifier = "==0.10.1" },
+    { name = "google", specifier = ">=3.0.0" },
+    { name = "google-generativeai", specifier = ">=0.3.0" },
+    { name = "grpcio", specifier = ">=1.48.2" },
+    { name = "mcp", specifier = ">=1.18.0" },
+    { name = "mgba", specifier = "==0.10.2" },
+    { name = "more-itertools" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
+    { name = "numpy", specifier = "==1.26.4" },
+    { name = "openai", specifier = "==1.90.0" },
+    { name = "opencv-python", specifier = "==4.9.0.80" },
+    { name = "pillow", specifier = "==10.2.0" },
+    { name = "pip", specifier = ">=25.2" },
+    { name = "protobuf", specifier = ">=3.19.6,!=4.24.0,<5.0.0" },
+    { name = "pyboy", specifier = "==2.5.2" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pygame", specifier = "==2.6.1" },
+    { name = "pytesseract", specifier = ">=0.3.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
+    { name = "python-dotenv", specifier = "==1.0.1" },
+    { name = "python-engineio", specifier = "==4.9.0" },
+    { name = "python-socketio", specifier = "==5.11.1" },
+    { name = "pytz", specifier = ">=2020.1" },
+    { name = "pyyaml", specifier = ">=5.1" },
+    { name = "requests", specifier = ">=2.32.2" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "six", specifier = ">=1.14.0" },
+    { name = "torchvision", specifier = ">=0.23.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
+    { name = "xxhash" },
+]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "mypy", specifier = ">=1.0.0" },
+    { name = "pytest", specifier = ">=7.0.0" },
+    { name = "pytest-cov", specifier = ">=4.0.0" },
+    { name = "ruff", specifier = ">=0.1.0" },
+]
+
+[[package]]
 name = "contourpy"
 version = "1.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1675,124 +1793,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
-name = "pokeagent-speedrun"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "accelerate" },
-    { name = "anthropic" },
-    { name = "beautifulsoup4" },
-    { name = "bitsandbytes" },
-    { name = "cffi" },
-    { name = "colorama" },
-    { name = "eventlet" },
-    { name = "fastapi" },
-    { name = "flask" },
-    { name = "flask-socketio" },
-    { name = "gevent" },
-    { name = "gevent-websocket" },
-    { name = "google" },
-    { name = "google-generativeai" },
-    { name = "grpcio" },
-    { name = "mcp" },
-    { name = "mgba" },
-    { name = "more-itertools" },
-    { name = "numpy" },
-    { name = "openai" },
-    { name = "opencv-python" },
-    { name = "pillow" },
-    { name = "pip" },
-    { name = "protobuf" },
-    { name = "pyboy" },
-    { name = "pydantic" },
-    { name = "pygame" },
-    { name = "pytesseract" },
-    { name = "python-dotenv" },
-    { name = "python-engineio" },
-    { name = "python-socketio" },
-    { name = "pytz" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "six" },
-    { name = "torchvision" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "xxhash" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "matplotlib" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "accelerate", specifier = ">=0.25.0" },
-    { name = "anthropic", specifier = ">=0.39.0" },
-    { name = "beautifulsoup4", specifier = ">=4.14.2" },
-    { name = "bitsandbytes", specifier = ">=0.41.0" },
-    { name = "cffi", specifier = ">=1.6" },
-    { name = "colorama" },
-    { name = "eventlet", specifier = "==0.35.2" },
-    { name = "fastapi", specifier = ">=0.104.0" },
-    { name = "flask", specifier = "==3.0.2" },
-    { name = "flask-socketio", specifier = "==5.3.6" },
-    { name = "gevent", specifier = "==23.9.1" },
-    { name = "gevent-websocket", specifier = "==0.10.1" },
-    { name = "google", specifier = ">=3.0.0" },
-    { name = "google-generativeai", specifier = ">=0.3.0" },
-    { name = "grpcio", specifier = ">=1.48.2" },
-    { name = "mcp", specifier = ">=1.18.0" },
-    { name = "mgba", specifier = "==0.10.2" },
-    { name = "more-itertools" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "numpy", specifier = "==1.26.4" },
-    { name = "openai", specifier = "==1.90.0" },
-    { name = "opencv-python", specifier = "==4.9.0.80" },
-    { name = "pillow", specifier = "==10.2.0" },
-    { name = "pip", specifier = ">=25.2" },
-    { name = "protobuf", specifier = ">=3.19.6,!=4.24.0,<5.0.0" },
-    { name = "pyboy", specifier = "==2.5.2" },
-    { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "pygame", specifier = "==2.6.1" },
-    { name = "pytesseract", specifier = ">=0.3.10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
-    { name = "python-dotenv", specifier = "==1.0.1" },
-    { name = "python-engineio", specifier = "==4.9.0" },
-    { name = "python-socketio", specifier = "==5.11.1" },
-    { name = "pytz", specifier = ">=2020.1" },
-    { name = "pyyaml", specifier = ">=5.1" },
-    { name = "requests", specifier = ">=2.32.2" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
-    { name = "six", specifier = ">=1.14.0" },
-    { name = "torchvision", specifier = ">=0.23.0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0" },
-    { name = "xxhash" },
-]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "mypy", specifier = ">=1.0.0" },
-    { name = "pytest", specifier = ">=7.0.0" },
-    { name = "pytest-cov", specifier = ">=4.0.0" },
-    { name = "ruff", specifier = ">=0.1.0" },
 ]
 
 [[package]]
