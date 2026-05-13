@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from agents.prompts.paths import (
     GAME_NAME,
-    AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
+    CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
     POKEAGENT_SYSTEM_PROMPT_PATH,
     render_prompt,
     resolve_repo_path,
@@ -30,7 +30,7 @@ MIN_PROMPT_OPTIMIZATION_WARMUP_STEPS = 50
 class PromptOptimizer:
     """Optimizes agent base prompt based on trajectory analysis."""
     
-    def __init__(self, vlm, run_data_manager, base_prompt_path: str = AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None):
+    def __init__(self, vlm, run_data_manager, base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None):
         """
         Initialize the prompt optimizer.
         
@@ -351,7 +351,7 @@ IMPROVED BASE PROMPT:
         return self.current_base_prompt
 
 
-def create_prompt_optimizer(vlm, run_data_manager, base_prompt_path: str = AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None) -> PromptOptimizer:
+def create_prompt_optimizer(vlm, run_data_manager, base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH, system_prompt_path: str = POKEAGENT_SYSTEM_PROMPT_PATH, initial_prompt_override: Optional[str] = None) -> PromptOptimizer:
     """Factory function to create a PromptOptimizer instance."""
     return PromptOptimizer(vlm, run_data_manager, base_prompt_path, system_prompt_path, initial_prompt_override=initial_prompt_override)
 

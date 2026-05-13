@@ -475,7 +475,7 @@ def build_local_subagent_tool_declarations(
     verify, summarize, gym_puzzle, battler, planner) are excluded so that
     only the generic primitives (execute_custom_subagent,
     process_trajectory_history) are exposed.  This is used for
-    experimental settings where the AutoEvolve loop must learn subagent
+    experimental settings where the ContinualHarness loop must learn subagent
     usage from scratch.
     """
     declarations: list[Dict[str, Any]] = []

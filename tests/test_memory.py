@@ -131,11 +131,11 @@ class TestMemoryStore:
             path="strategy",
             title="Battle tip",
             content="Use Water Gun",
-            source="auto_evolve",
+            source="continual_harness",
             last_modified_step=42,
         )
         entry = store.get(entry_id)
-        assert entry.source == "auto_evolve"
+        assert entry.source == "continual_harness"
         assert entry.last_modified_step == 42
 
     def test_coordinates_round_trip(self, tmp_path):
