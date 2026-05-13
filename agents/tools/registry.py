@@ -30,15 +30,15 @@ EXPERT_SCAFFOLDS = frozenset({"pokeagent", "autonomous_cli"})
 
 # Scaffolds where built-in subagents are excluded, but generic primitives
 # (skills, code, subagent CRUD, custom subagents, etc.) are available.
-NO_BUILTINS_SCAFFOLDS = frozenset({"simple", "autoevolve"})
+NO_BUILTINS_SCAFFOLDS = frozenset({"simple", "continualharness"})
 
 # Union of all scaffolds except simplest — used for tools that every scaffold
 # except the bare-minimum one should have.
 _ALL_EXCEPT_SIMPLEST = frozenset(
-    {"pokeagent", "autonomous_cli", "simple", "autoevolve", "simplest"}
+    {"pokeagent", "autonomous_cli", "simple", "continualharness", "simplest"}
 )
 _STANDARD_SCAFFOLDS = frozenset(
-    {"pokeagent", "autonomous_cli", "simple", "autoevolve"}
+    {"pokeagent", "autonomous_cli", "simple", "continualharness"}
 )
 
 
@@ -551,15 +551,15 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
             "required": ["topic"],
         },
     },
-    # -- replan_objectives: simple + autoevolve only (not expert, not simplest) --
+    # -- replan_objectives: simple + continualharness only (not expert, not simplest) --
     {
         **REPLAN_OBJECTIVES_TOOL_DECLARATION,
         "scaffolds": NO_BUILTINS_SCAFFOLDS,
     },
-    # -- evolve_harness: autoevolve only --
+    # -- evolve_harness: continualharness only --
     {
         "name": "evolve_harness",
-        "scaffolds": frozenset({"autoevolve"}),
+        "scaffolds": frozenset({"continualharness"}),
         "description": (
             "Trigger an evolution pass NOW to improve skills, subagents, and "
             "memory based on recent performance. Use this when you notice a "

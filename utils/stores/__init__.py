@@ -1,5 +1,5 @@
 """
-Persistent data stores for the AutoEvolve cognitive hierarchy.
+Persistent data stores for the ContinualHarness cognitive hierarchy.
 
 Provides BaseStore (generic CRUD + tree overview + persistence) and
 concrete implementations for Memory and Skills.

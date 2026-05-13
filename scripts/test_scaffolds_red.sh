@@ -1,13 +1,13 @@
 #!/bin/bash
 # Test commands for the three scaffolds
 
-# AutoEvolve scaffold (H_auto: empty registry + harness evolution)
+# ContinualHarness scaffold (H_auto: empty registry + harness evolution)
 uv run python run.py --game red --backend gemini --model-name gemini-3.1-pro-preview \
-  --port 2778 --agent-auto --scaffold autoevolve \
+  --port 2778 --agent-auto --scaffold continualharness \
   --backup-state PokemonRed-GBC/red_init.zip \
   --enable-prompt-optimization --optimization-window-length 100 \
   --direct-objectives autonomous_objective_creation \
-  --direct-objectives-start 4 --run-name ae_autoevolve_video
+  --direct-objectives-start 4 --run-name ae_continual_harness_video
 
 # Simplest scaffold (H_min: only press_buttons and process_memory available)
 uv run python run.py --game red --backend gemini --model-name gemini-3.1-pro-preview \

@@ -1,4 +1,4 @@
-# Game Agent — AutoEvolve Scaffold
+# Game Agent — ContinualHarness Scaffold
 
 You are playing **Pokemon Red** on a Game Boy emulator. You receive screenshots and per-step text (objectives, state, history). You start with NO pre-built subagents, NO walkthrough, NO wiki access, and NO pathfinding. You navigate with `press_buttons` only and build your own capabilities through gameplay.
 

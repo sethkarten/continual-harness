@@ -8,9 +8,9 @@ Prompt and instruction files used by the agent and server:
 
 - `pokeagent-directives/system_prompt.md` — **Lean fixed system prompt** when **prompt optimization is on**: **tool reference + hard constraints only**. Requires an initialized **`run_data_manager`** (experiment run directory); otherwise `PokeAgent` raises **`RuntimeError`** at construction. Strategy is supplied in the user turn via the optimizable base block.
 
-- `pokeagent-directives/auto-evolve/BASE_ORCHESTRATOR_POLICY.md` — **Seed** for the optimizable strategic block. Loaded once into `PromptOptimizer.current_base_prompt`; each optimization step rewrites that in-memory text (and saves snapshots under `run_data/.../prompt_evolution/meta_prompts/`). Subsequent optimizations edit the **previous** optimized base, not a fresh read from disk.
+- `pokeagent-directives/continual-harness/BASE_ORCHESTRATOR_POLICY.md` — **Seed** for the optimizable strategic block. Loaded once into `PromptOptimizer.current_base_prompt`; each optimization step rewrites that in-memory text (and saves snapshots under `run_data/.../prompt_evolution/meta_prompts/`). Subsequent optimizations edit the **previous** optimized base, not a fresh read from disk.
 
-- `pokeagent-directives/auto-evolve/SYSTEM_PROMPT.md` — Fixed AutoEvolve system prompt (tool contract and constraints). The evolution loop does not rewrite this file.
+- `pokeagent-directives/continual-harness/SYSTEM_PROMPT.md` — Fixed ContinualHarness system prompt (tool contract and constraints). The evolution loop does not rewrite this file.
 
 - `cli-agent-directives/pokemon_directive.md` — Directive used by external/containerized CLI agents (`run_cli.py`), not wired through `PokeAgent.__init__`.
 
