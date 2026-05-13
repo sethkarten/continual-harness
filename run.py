@@ -50,10 +50,10 @@ CUSTOM_AGENT_CONFIGS = {
         "use_backend": True,
         "supports_prompt_optimization": False,
     },
-    "autoevolve": {
+    "continualharness": {
         "name": "PokeAgent",
         "details": [
-            "AutoEvolve scaffold (H_auto): starts from H_min + evolutionary optimization",
+            "ContinualHarness scaffold (H_auto): starts from H_min + evolutionary optimization",
             "No built-in subagent tools; empty registry (agent creates its own)",
             "Reset-free prompt evolution from trajectory segments",
         ],
@@ -93,7 +93,7 @@ SCAFFOLD_DESCRIPTIONS = {
     "pokeagent": "PokeAgent (VLM benchmark agent with tool scaffolding)",
     "simple": "PokeAgent-Simple (H_min: no built-in subagents, direct replan, empty registry)",
     "simplest": "PokeAgent-Simplest (bare minimum: press_buttons + process_memory only)",
-    "autoevolve": "AutoEvolve (H_auto: H_min + reset-free evolutionary optimization)",
+    "continualharness": "ContinualHarness (H_auto: H_min + reset-free evolutionary optimization)",
     "autonomous_cli": "PokeAgent (legacy alias)",
     "vision_only": "Vision-Only Agent (no map info, no pathfinding, button sequences)",
 }
@@ -127,8 +127,8 @@ def start_server(args, run_id=None):
     # Single-writer metrics: server is the only writer
     server_env["LLM_METRICS_WRITE_ENABLED"] = "true"
 
-    # simple/simplest/autoevolve scaffolds start with an empty subagent registry
-    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "autoevolve"):
+    # simple/simplest/continualharness scaffolds start with an empty subagent registry
+    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "continualharness"):
         server_env["EXCLUDE_BUILTIN_SUBAGENTS"] = "1"
 
     # Pass through server-relevant arguments
@@ -240,7 +240,7 @@ def start_custom_agent(agent_config, args):
     print("")
 
     # Ensure EXCLUDE_BUILTIN_SUBAGENTS is visible in the agent process too
-    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "autoevolve"):
+    if getattr(args, "scaffold", "pokeagent") in ("simple", "simplest", "continualharness"):
         os.environ["EXCLUDE_BUILTIN_SUBAGENTS"] = "1"
 
     # Dynamic import
@@ -319,7 +319,7 @@ def main():
                        help="Model name to use")
     parser.add_argument("--scaffold", type=str, default="pokeagent",
                        choices=SUPPORTED_SCAFFOLDS,
-                       help="Agent scaffold: pokeagent (default)/autonomous_cli, or vision_only")
+                       help="Agent scaffold: pokeagent (default), simple, simplest, continualharness, autonomous_cli, or vision_only")
     
     # Operation modes
     parser.add_argument("--headless", action="store_true", 

@@ -53,14 +53,14 @@ For module-level detail, see the README in each area:
 - **[server/README.md](server/README.md)** — Game server, frame streaming, MCP proxy, ports and endpoints.
 - **[agents/README.md](agents/README.md)** — PokeAgent, prompts, objectives, prompt optimization, local subagents.
 - **[pokemon_env/README.md](pokemon_env/README.md)** — Emerald: mGBA emulator, memory reader, Porymap map data.
-- `**pokemon_red_env/`** — Red: PyBoy emulator, memory/map readers, Red milestones (see [System-Design/architecture/pokemon_infrastructure.md](System-Design/architecture/pokemon_infrastructure.md)).
+- **`pokemon_red_env/`** — Red: PyBoy emulator, memory/map readers, Red milestones (see [System-Design/architecture/pokemon_infrastructure.md](System-Design/architecture/pokemon_infrastructure.md)).
 - **[utils/README.md](utils/README.md)** — Mapping, persistence, VLM backends, metrics.
 
 ## Features
 
 - **Multiple VLM backends**: OpenAI, OpenRouter, Google Gemini, Anthropic, and Vertex (via `utils/agent_infrastructure/vlm_backends.py`)
 - **External CLI Harnesses**: Claude Code, Gemini CLI, Codex, and Hermes via `run_cli.py`
-- **Custom Agent Harnesses**: Several harness configuration settings (i.e, AutoEvolve, PokeAgent, Simplest)
+- **Custom Agent Harnesses**: Several harness configuration settings (i.e, ContinualHarness, PokeAgent, Simplest)
 - **PokeAgent local subagents**: Custom subagent abstractions accessible to our custom PokeAgent harness: `subagent_reflect`, `subagent_verify`, `subagent_gym_puzzle`, `subagent_summarize`, `subagent_battler`, and `subagent_plan_objectives`.
 - **Checkpoints & backups**: Save/resume runs; backups in `backups/`; analysis data in `run_data/`. Backups restore **disk** state under `.pokeagent_cache/` (objectives, long-term memory, checkpoint, trajectories file if present, etc.), not the agent’s in-memory short-term conversation window—see [utils/README.md](utils/README.md) (`data_persistence`).
 - **Metrics & logging**: Per-step and cumulative tokens, cost, actions, and run initialization settings are stored in `.pokeagent_cache/{run_id}/cumulative_metrics.json`; LLM logs (`llm_logs/`) and backend session logs are also tracked, though `cumulative_metrics.json` is the aggregate source of truth.
@@ -186,7 +186,7 @@ macOS (x86_64): `brew install mgba`
 - **Emerald:** `Emerald-GBAdvance/rom.gba`. US English SHA-1: `f3ae088181bf583e55daf962a92bb46f4f1d07b7`.
 - **Red:** `PokemonRed-GBC/pokered.gbc` (expected filename for `setup_environment()`).
 
-Use `**--game red|emerald`** with `**run.py**` / `**run_cli.py**` so server and agent prompts match the ROM you placed.
+Use **`--game red|emerald`** with **`run.py`** / **`run_cli.py`** so server and agent prompts match the ROM you placed.
 
 ## VLM Backend Setup (run.py)
 
@@ -274,7 +274,7 @@ Choose behavior with `--scaffold` (default: `pokeagent`).
 | `pokeagent`      | Default. Full tool scaffolding (built-in subagents, walkthrough/wiki/pathfinding where enabled).                            |
 | `simple`         | Minimal scaffold. No built-in subagent tools; keeps the generic tool registry and `replan_objectives`.                      |
 | `simplest`       | Smallest ablation scaffold. No built-in subagent tools, no objectives block, and no local subagent/tool registry.           |
-| `autoevolve`     | Like `simple`, plus the `evolve_harness` tool. Full harness evolution runs only when `--enable-prompt-optimization` is set. |                                                                                    |
+| `continualharness` | Like `simple`, plus the `evolve_harness` tool. Full harness evolution runs only when `--enable-prompt-optimization` is set. |
 | `vision_only`    | Vision-only agent (no map info, no pathfinding, button sequences).                                                          |
 
 
@@ -291,8 +291,8 @@ python run.py --scaffold pokeagent --agent-auto
 
 | Flag                                     | Description                                                                                                                                                                                                                                              |
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--game red|emerald`                     | Which title to run; sets server `**GAME_TYPE**` and client env before agents import (default: `emerald`).                                                                                                                                                |
-| `--rom PATH`                             | Client-side ROM path hint (default: `Emerald-GBAdvance/rom.gba`). If `game=red` and ROM is still the default Emerald path, rewritten to `PokemonRed-GBC/pokered.gbc`. The spawned game server uses `**setup_environment()**` ROM constants, not `--rom`. |
+| `--game red\|emerald`                    | Which title to run; sets server **`GAME_TYPE`** and client env before agents import (default: `emerald`).                                                                                                                                               |
+| `--rom PATH`                             | Client-side ROM path hint (default: `Emerald-GBAdvance/rom.gba`). If `game=red` and ROM is still the default Emerald path, rewritten to `PokemonRed-GBC/pokered.gbc`. The spawned game server uses **`setup_environment()`** ROM constants, not `--rom`. |
 | `--port INT`                             | Port for the game server and web interface (default: 8000). In agent mode, the frame stream server uses `port + 1`; `run.py` does not start a separate MCP proxy.                                                                                        |
 | `--load-state PATH`                      | Load a saved state file on startup.                                                                                                                                                                                                                      |
 | `--load-checkpoint`                      | Load from checkpoint files in the run cache.                                                                                                                                                                                                             |
@@ -300,7 +300,7 @@ python run.py --scaffold pokeagent --agent-auto
 | `--bootstrap-from PATH`                  | Import learned artifacts from a prior run (`memory.json`, `skills.json`, `subagents.json`, and an evolved orchestrator policy when present).                                                                                                             |
 | `--backend NAME`                         | VLM backend: `openai`, `gemini`, `openrouter`, `anthropic`, `vertex`, or `auto` (default: `gemini`).                                                                                                                                                     |
 | `--model-name TEXT`                      | Model name for the backend (default: `gemini-2.5-flash`).                                                                                                                                                                                                |
-| `--scaffold NAME`                        | Agent scaffold: `pokeagent`, `simple`, `simplest`, `autoevolve`, `autonomous_cli`, `vision_only` (default: `pokeagent`).                                                                                                                                 |
+| `--scaffold NAME`                        | Agent scaffold: `pokeagent`, `simple`, `simplest`, `continualharness`, `autonomous_cli`, `vision_only` (default: `pokeagent`).                                                                                                                           |
 | `--headless`                             | Run without the pygame display.                                                                                                                                                                                                                          |
 | `--agent-auto`                           | Run the agent in automatic mode (no manual stepping).                                                                                                                                                                                                    |
 | `--manual`                               | Start in manual mode instead of agent mode.                                                                                                                                                                                                              |
@@ -370,14 +370,11 @@ Edit the prompts in those files and restart the agent. Use `--debug-state` for d
 If you use this codebase in your research, please cite:
 
 ```bibtex
-@misc{karten2026pokeagentchallengecompetitivelongcontext,
-      title={The PokeAgent Challenge: Competitive and Long-Context Learning at Scale}, 
-      author={Seth Karten and Jake Grigsby and Tersoo Upaa Jr and Junik Bae and Seonghun Hong and Hyunyoung Jeong and Jaeyoon Jung and Kun Kerdthaisong and Gyungbo Kim and Hyeokgi Kim and Yujin Kim and Eunju Kwon and Dongyu Liu and Patrick Mariglia and Sangyeon Park and Benedikt Schink and Xianwei Shi and Anthony Sistilli and Joseph Twin and Arian Urdu and Matin Urdu and Qiao Wang and Ling Wu and Wenli Zhang and Kunsheng Zhou and Stephanie Milani and Kiran Vodrahalli and Amy Zhang and Fei Fang and Yuke Zhu and Chi Jin},
-      year={2026},
-      eprint={2603.15563},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2603.15563}, 
+@article{karten2026continual,
+  title={Continual Harness: Online Adaptation for Self-Improving Foundation Agents},
+  author={Karten, Seth and Zhang, Joel and Upaa Jr, Tersoo and Feng, Ruirong and Li, Wenzhe and Shi, Chengshuai and Jin, Chi and Vodrahalli, Kiran},
+  journal={arXiv preprint arXiv:2605.09998},
+  year={2026}
 }
 ```
 

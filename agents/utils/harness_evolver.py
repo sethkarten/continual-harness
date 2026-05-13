@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HarnessEvolver — Full harness evolution for the AutoEvolve scaffold.
+HarnessEvolver — Full harness evolution for the ContinualHarness scaffold.
 
 Subsumes PromptOptimizer and adds subagent, skill, and memory evolution.
 Runs periodically (every N steps, after a minimum warmup) to analyze
@@ -14,9 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agents.prompts.paths import (
-    AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
+    CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
     GAME_NAME,
-    AUTOEVOLVE_SYSTEM_PROMPT_PATH,
+    CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
     resolve_repo_path,
 )
 from agents.utils.prompt_optimizer import PromptOptimizer
@@ -33,7 +33,7 @@ EARLY_FREQUENCY = 25
 STABLE_FREQUENCY = 100
 
 # Tools that exist for every scaffold (used to validate subagent tool lists)
-# Tools available in the autoevolve scaffold (no navigate_to, no walkthrough, no wiki)
+# Tools available in the continualharness scaffold (no navigate_to, no walkthrough, no wiki)
 _ALWAYS_AVAILABLE_TOOLS = frozenset({
     "press_buttons",
     "complete_direct_objective",
@@ -57,8 +57,8 @@ class HarnessEvolver:
         self,
         vlm,
         run_data_manager,
-        base_prompt_path: str = AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
-        system_prompt_path: str = AUTOEVOLVE_SYSTEM_PROMPT_PATH,
+        base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
+        system_prompt_path: str = CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
         initial_prompt_override: str | None = None,
     ):
         # Compose the existing PromptOptimizer for prompt-level evolution
@@ -634,8 +634,8 @@ Respond with ONLY a JSON object (no markdown fences):
 def create_harness_evolver(
     vlm,
     run_data_manager,
-    base_prompt_path: str = AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
-    system_prompt_path: str = AUTOEVOLVE_SYSTEM_PROMPT_PATH,
+    base_prompt_path: str = CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
+    system_prompt_path: str = CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
     initial_prompt_override: str | None = None,
 ) -> HarnessEvolver:
     """Factory function to create a HarnessEvolver instance."""

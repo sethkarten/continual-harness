@@ -6,8 +6,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import run
 from agents.PokeAgent import PokeAgent
-from agents.prompts.paths import POKEAGENT_PROMPT_PATH, SIMPLE_PROMPT_PATH, SIMPLEST_PROMPT_PATH
+from agents.prompts.paths import (
+    CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
+    POKEAGENT_PROMPT_PATH,
+    SIMPLE_PROMPT_PATH,
+    SIMPLEST_PROMPT_PATH,
+)
 from agents.tools.registry import build_tools_for_scaffold
 
 _POKE_MODULE = importlib.import_module("agents.PokeAgent")
@@ -109,6 +115,19 @@ def test_simplest_scaffold_uses_simplest_prompt():
     m_cop.assert_not_called()
 
 
+def test_continualharness_scaffold_uses_continualharness_prompt():
+    load_mock = MagicMock(return_value="SYS_BODY")
+    with patch.object(_POKE_MODULE, "MCPToolAdapter"), patch.object(_POKE_MODULE, "VLM"), patch.object(
+        _POKE_MODULE, "create_prompt_optimizer"
+    ) as m_cop, patch.object(_POKE_MODULE, "get_run_data_manager") as m_rm:
+        m_rm.return_value = None
+        with patch.object(PokeAgent, "_load_system_instructions", load_mock):
+            PokeAgent(server_url="http://localhost:8000", scaffold="continualharness")
+    load_mock.assert_called_once()
+    assert _filename_arg(load_mock) == CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH
+    m_cop.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Tool declarations per scaffold (registry integration)
 # ---------------------------------------------------------------------------
@@ -121,7 +140,7 @@ EXPECTED_TOOLS_PER_SCAFFOLD = {
         "execute_custom_subagent", "process_trajectory_history",
         "replan_objectives",
     },
-    "autoevolve": {
+    "continualharness": {
         "press_buttons", "complete_direct_objective", "process_memory",
         "process_skill", "run_skill", "run_code", "process_subagent",
         "execute_custom_subagent", "process_trajectory_history",
@@ -138,6 +157,12 @@ EXPECTED_TOOLS_PER_SCAFFOLD = {
         "execute_custom_subagent", "process_trajectory_history",
     },
 }
+
+
+def test_run_scaffold_contract_uses_continualharness_not_legacy_name():
+    assert "continualharness" in run.SUPPORTED_SCAFFOLDS
+    legacy_scaffold_name = "auto" + "evolve"
+    assert legacy_scaffold_name not in run.SUPPORTED_SCAFFOLDS
 
 
 @pytest.mark.parametrize("scaffold", list(EXPECTED_TOOLS_PER_SCAFFOLD.keys()))

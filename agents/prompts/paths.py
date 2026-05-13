@@ -59,17 +59,17 @@ SIMPLEST_PROMPT_PATH = _simplest_prompts[game_type]
 # ---------------------------------------------------------------------------
 CLI_AGENT_DIRECTIVE_PATH = f"{PROMPTS_ROOT}/cli-agent-directives/pokemon_directive.md"
 
-# AutoEvolve directory (renamed from prompt-optimization/)
-_autoevolve_base_orchestrator_policies = {
-    "red": f"{PROMPTS_ROOT}/pokeagent-directives/auto-evolve/BASE_ORCHESTRATOR_POLICY.md",
-    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/auto-evolve/BASE_ORCHESTRATOR_POLICY.md",
+# ContinualHarness directory (renamed from prompt-optimization/)
+_continual_harness_base_orchestrator_policies = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/BASE_ORCHESTRATOR_POLICY.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/BASE_ORCHESTRATOR_POLICY.md",
 }
-_autoevolve_system_prompts = {
-    "red": f"{PROMPTS_ROOT}/pokeagent-directives/auto-evolve/SYSTEM_PROMPT_RED.md",
-    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/auto-evolve/SYSTEM_PROMPT.md",
+_continual_harness_system_prompts = {
+    "red": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/SYSTEM_PROMPT_RED.md",
+    "emerald": f"{PROMPTS_ROOT}/pokeagent-directives/continual-harness/SYSTEM_PROMPT.md",
 }
-AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH = _autoevolve_base_orchestrator_policies[game_type]
-AUTOEVOLVE_SYSTEM_PROMPT_PATH = _autoevolve_system_prompts[game_type]
+CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH = _continual_harness_base_orchestrator_policies[game_type]
+CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH = _continual_harness_system_prompts[game_type]
 
 
 def resolve_repo_path(relative_path: str) -> Path:

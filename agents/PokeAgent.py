@@ -71,8 +71,8 @@ from agents.subagents.planner import (
     format_planner_history,
 )
 from agents.prompts.paths import (
-    AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
-    AUTOEVOLVE_SYSTEM_PROMPT_PATH,
+    CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
+    CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
     POKEAGENT_PROMPT_PATH,
     SIMPLE_PROMPT_PATH,
     SIMPLEST_PROMPT_PATH,
@@ -83,7 +83,7 @@ from agents.prompts.paths import (
 # Scaffolds that start with an empty subagent registry (no built-in subagents).
 # NOTE: "simplest" is intentionally absent — it is handled as a distinct tier
 # with only press_buttons + process_memory.
-_NO_BUILTINS_SCAFFOLDS = {"simple", "autoevolve"}
+_NO_BUILTINS_SCAFFOLDS = {"simple", "continualharness"}
 _SIMPLEST_SCAFFOLD = "simplest"
 from agents.tools.registry import build_tools_for_scaffold
 from utils.json_utils import convert_protobuf_value, convert_protobuf_args, normalize_replan_edits
@@ -228,8 +228,8 @@ class PokeAgent:
 
         # Determine which system instructions file to use
         if system_instructions_file is None:
-            if self.scaffold == "autoevolve":
-                system_instructions_file = AUTOEVOLVE_SYSTEM_PROMPT_PATH
+            if self.scaffold == "continualharness":
+                system_instructions_file = CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH
             elif self.scaffold == _SIMPLEST_SCAFFOLD:
                 system_instructions_file = SIMPLEST_PROMPT_PATH
             elif self.scaffold in _NO_BUILTINS_SCAFFOLDS:
@@ -288,13 +288,13 @@ class PokeAgent:
                     "(experiment run directory). Use run.py (or equivalent) so run data is set up "
                     "before starting PokeAgent, or disable prompt optimization."
                 )
-            if self.scaffold == "autoevolve":
+            if self.scaffold == "continualharness":
                 from agents.utils.harness_evolver import create_harness_evolver
                 self.harness_evolver = create_harness_evolver(
                     vlm=self.vlm,
                     run_data_manager=run_manager,
-                    base_prompt_path=AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
-                    system_prompt_path=AUTOEVOLVE_SYSTEM_PROMPT_PATH,
+                    base_prompt_path=CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
+                    system_prompt_path=CONTINUAL_HARNESS_SYSTEM_PROMPT_PATH,
                     initial_prompt_override=self._bootstrap_prompt_content,
                 )
                 self.prompt_optimizer = self.harness_evolver.prompt_optimizer
@@ -303,7 +303,7 @@ class PokeAgent:
                 self.prompt_optimizer = create_prompt_optimizer(
                     vlm=self.vlm,
                     run_data_manager=run_manager,
-                    base_prompt_path=AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH,
+                    base_prompt_path=CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH,
                     initial_prompt_override=self._bootstrap_prompt_content,
                 )
                 logger.info(f"🔄 Prompt optimization ENABLED (trajectory window: {optimization_window_length} steps)")
@@ -345,7 +345,7 @@ class PokeAgent:
                 logger.info(f"📋 No prompt_optimizer attribute found")
         
         # Otherwise load from canonical repo path (e.g. optimization off but code path hit)
-        filepath = resolve_repo_path(AUTOEVOLVE_BASE_ORCHESTRATOR_POLICY_PATH)
+        filepath = resolve_repo_path(CONTINUAL_HARNESS_BASE_ORCHESTRATOR_POLICY_PATH)
         if not filepath.exists():
             logger.warning(f"Base prompt file not found: {filepath}, using minimal default")
             return """# Strategic Guidance
@@ -524,7 +524,7 @@ class PokeAgent:
         num_steps = int(arguments.get("num_steps", 50))
 
         if not self.harness_evolver:
-            return json.dumps({"success": False, "error": "HarnessEvolver not available (not in autoevolve scaffold or optimization not enabled)"})
+            return json.dumps({"success": False, "error": "HarnessEvolver not available (not in continualharness scaffold or optimization not enabled)"})
 
         logger.info(f"Orchestrator requested evolution: {reasoning}")
         try:
@@ -1714,7 +1714,7 @@ class PokeAgent:
             start_time = time.time()
             vlm_call_start = time.time()
             claimed_step = None
-            scaffold_label = "auto-evolve" if self.scaffold == "autoevolve" else self.scaffold
+            scaffold_label = "continual-harness" if self.scaffold == "continualharness" else self.scaffold
             orchestrator_interaction_name = f"{scaffold_label}_orchestrator"
             try:
 
@@ -3290,7 +3290,7 @@ def main():
         help=(
             "Repo-relative path to system instructions markdown. "
             "Omit for automatic scaffold selection: POKEAGENT.md (pokeagent), SIMPLE.md "
-            "(simple/simplest), or auto-evolve/SYSTEM_PROMPT.md (autoevolve)."
+            "(simple/simplest), or continual-harness/SYSTEM_PROMPT.md (continualharness)."
         ),
     )
     parser.add_argument(
