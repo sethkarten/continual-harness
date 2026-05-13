@@ -1,7 +1,7 @@
 [project]
-name = "pokeagent-speedrun"
+name = "continual-harness"
 version = "0.1.0"
-description = "AI agent that plays Pokémon Emerald using vision-language models"
+description = "Continual Harness: online adaptation for self-improving foundation agents, evaluated on Pokémon Red and Emerald."
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
 
