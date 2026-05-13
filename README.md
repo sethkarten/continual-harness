@@ -370,14 +370,11 @@ Edit the prompts in those files and restart the agent. Use `--debug-state` for d
 If you use this codebase in your research, please cite:
 
 ```bibtex
-@misc{karten2026pokeagentchallengecompetitivelongcontext,
-      title={The PokeAgent Challenge: Competitive and Long-Context Learning at Scale}, 
-      author={Seth Karten and Jake Grigsby and Tersoo Upaa Jr and Junik Bae and Seonghun Hong and Hyunyoung Jeong and Jaeyoon Jung and Kun Kerdthaisong and Gyungbo Kim and Hyeokgi Kim and Yujin Kim and Eunju Kwon and Dongyu Liu and Patrick Mariglia and Sangyeon Park and Benedikt Schink and Xianwei Shi and Anthony Sistilli and Joseph Twin and Arian Urdu and Matin Urdu and Qiao Wang and Ling Wu and Wenli Zhang and Kunsheng Zhou and Stephanie Milani and Kiran Vodrahalli and Amy Zhang and Fei Fang and Yuke Zhu and Chi Jin},
-      year={2026},
-      eprint={2603.15563},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2603.15563}, 
+@article{karten2026continual,
+  title={Continual Harness: Online Adaptation for Self-Improving Foundation Agents},
+  author={Karten, Seth and Zhang, Joel and Upaa Jr, Tersoo and Feng, Ruirong and Li, Wenzhe and Shi, Chengshuai and Jin, Chi and Vodrahalli, Kiran},
+  journal={arXiv preprint arXiv:2605.09998},
+  year={2026}
 }
 ```
 
