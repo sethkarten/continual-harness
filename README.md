@@ -6,6 +6,8 @@ Continual Harness starts from a minimal environment interface (frames, ASCII tex
 
 In this repo, Continual Harness is the `continualharness` scaffold (`--scaffold continualharness --enable-prompt-optimization`); see [Continual Harness Scaffold](#continual-harness-scaffold) below.
 
+> **Note:** This repository was previously published as `sethkarten/pokeagent-speedrun`, the reference framework for [**The PokéAgent Challenge**](https://arxiv.org/abs/2603.15563) (Karten et al., 2026). It has been renamed and generalized — the hand-engineered PokéAgent harness is retained as the `pokeagent` scaffold (`H_expert`), and the repository now centers on Continual Harness as the headline contribution. GitHub auto-redirects the old URL, so existing clone commands and links continue to work.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -418,13 +420,24 @@ Edit the prompts in those files and restart the agent. For Nuzlocke-style behavi
 
 ## Citation
 
-If you use this codebase in your research, please cite:
+If you use this codebase in your research, please cite Continual Harness:
 
 ```bibtex
 @article{karten2026continual,
   title={Continual Harness: Online Adaptation for Self-Improving Foundation Agents},
   author={Karten, Seth and Zhang, Joel and Upaa Jr, Tersoo and Feng, Ruirong and Li, Wenzhe and Shi, Chengshuai and Jin, Chi and Vodrahalli, Kiran},
   journal={arXiv preprint arXiv:2605.09998},
+  year={2026}
+}
+```
+
+If you use the PokéAgent benchmark, environment, or `pokeagent` (`H_expert`) scaffold, please also cite the PokéAgent Challenge:
+
+```bibtex
+@article{karten2026pokeagent,
+  title={The PokéAgent Challenge: Competitive and Long-Context Learning at Scale},
+  author={Karten, Seth and Grigsby, Jake and Upaa Jr, Tersoo and Bae, Junik and Hong, Seonghun and Jeong, Hyunyoung and Jung, Jaeyoon and Kerdthaisong, Kun and Kim, Gyungbo and Kim, Hyeokgi and Kim, Yujin and Kwon, Eunju and Liu, Dongyu and Mariglia, Patrick and Park, Sangyeon and Schink, Benedikt and Shi, Xianwei and Sistilli, Anthony and Twin, Joseph and Urdu, Arian and Urdu, Matin and Wang, Qiao and Wu, Ling and Zhang, Wenli and Zhou, Kunsheng and Milani, Stephanie and Vodrahalli, Kiran and Zhang, Amy and Fang, Fei and Zhu, Yuke and Jin, Chi},
+  journal={arXiv preprint arXiv:2603.15563},
   year={2026}
 }
 ```
